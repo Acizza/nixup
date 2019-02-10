@@ -58,7 +58,7 @@ impl StorePath {
 
         match name.find('-') {
             Some(idx) if name.len() <= idx + 1 => return None,
-            Some(idx) => name.replace_range(..idx + 1, ""),
+            Some(idx) => name.replace_range(..=idx, ""),
             None => return None,
         }
 

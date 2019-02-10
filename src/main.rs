@@ -14,7 +14,8 @@ fn main() {
         (author: env!("CARGO_PKG_AUTHORS"))
         (about: "A tool for NixOS to display which system packages have been updated")
         (@arg preupdate: -p --preupdate "Must be used before a system update")
-    ).get_matches();
+    )
+    .get_matches();
 
     match run(&args) {
         Ok(_) => (),
@@ -74,7 +75,11 @@ fn detect_package_diff() -> Result<(), Error> {
 fn load_saved_system_stores() -> Result<HashMap<String, StorePath>, Error> {
     let path = get_saved_store_path()?;
     let file = File::open(path)?;
-    let stores = rmp_serde::decode::from_read(file)?;
+    let mut stores: HashMap<String, StorePath> = rmp_serde::decode::from_read(file)?;
+
+    for (name, store) in &mut stores {
+        store.name = name.clone();
+    }
 
     Ok(stores)
 }

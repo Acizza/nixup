@@ -2,7 +2,7 @@ mod error;
 mod store;
 
 use crate::error::Error;
-use crate::store::StorePath;
+use crate::store::{StoreDiff, SystemPackage};
 use clap::clap_app;
 use colored::Colorize;
 use std::collections::HashMap;
@@ -42,7 +42,7 @@ fn main() {
 
 fn run(args: &clap::ArgMatches) -> Result<(), Error> {
     if args.is_present("preupdate") {
-        save_system_packages()?;
+        save_system_pkgs()?;
     } else {
         detect_package_diff()?;
     }
@@ -50,39 +50,94 @@ fn run(args: &clap::ArgMatches) -> Result<(), Error> {
     Ok(())
 }
 
-fn save_system_packages() -> Result<(), Error> {
-    let stores = store::get_system_pkg_stores()?;
+fn save_system_pkgs() -> Result<(), Error> {
+    let packages = {
+        let mut all = store::parse_system_packages()?;
+        let mut cleaned = Vec::with_capacity(all.len());
+
+        for (_, pkg) in all.drain() {
+            cleaned.push(pkg);
+        }
+
+        cleaned
+    };
 
     let savefile_path = get_saved_store_path()?;
     let mut file = File::create(savefile_path)?;
-    rmp_serde::encode::write(&mut file, &stores)?;
+    rmp_serde::encode::write(&mut file, &packages)?;
 
     Ok(())
 }
 
+fn load_system_pkgs() -> Result<store::SystemPackageMap, Error> {
+    let path = get_saved_store_path()?;
+    let file = File::open(path)?;
+
+    let mut packages: Vec<SystemPackage> = rmp_serde::decode::from_read(file)?;
+    let mut results = HashMap::with_capacity(packages.len());
+
+    for pkg in packages.drain(..) {
+        results.insert(pkg.path.name.clone(), pkg);
+    }
+
+    Ok(results)
+}
+
 fn detect_package_diff() -> Result<(), Error> {
-    let old_stores = load_saved_system_stores()?;
-    let current_stores = store::get_system_pkg_stores()?;
-    let diffs = store::get_store_diffs(&current_stores, &old_stores);
-
-    println!(
-        "{} system package(s) upgraded\n",
-        diffs.len().to_string().blue()
-    );
-
-    for diff in &diffs {
+    let format_ver_change = |diff: &StoreDiff| {
         let ver_to_str = if cfg!(not(no_colors)) {
             bolden_str_diff(&diff.ver_from, &diff.ver_to)
         } else {
             diff.ver_to.green().to_string()
         };
 
-        println!(
-            "{}: {} -> {}",
-            diff.name.blue(),
-            diff.ver_from.red(),
-            ver_to_str
-        );
+        format!("{} -> {}", diff.ver_from.red(), ver_to_str)
+    };
+
+    let (old_pkgs, old_gdeps) = {
+        let mut pkgs = load_system_pkgs()?;
+        let deps = store::isolate_global_dependencies(&mut pkgs)?;
+
+        (pkgs, deps)
+    };
+
+    let (new_pkgs, new_gdeps) = {
+        let mut pkgs = store::parse_system_packages()?;
+        let deps = store::isolate_global_dependencies(&mut pkgs)?;
+
+        (pkgs, deps)
+    };
+
+    let pkg_diffs = store::get_package_diffs(&new_pkgs, &old_pkgs);
+
+    println!(
+        "{} system package(s) upgraded\n",
+        pkg_diffs.len().to_string().blue()
+    );
+
+    for diff in &pkg_diffs {
+        print!("{}: ", diff.name.blue());
+
+        if let Some(pkg) = &diff.pkg {
+            println!("{}", format_ver_change(pkg));
+        } else {
+            println!();
+        }
+
+        for dep in &diff.deps {
+            println!("  {}: {}", dep.name.blue(), format_ver_change(dep));
+        }
+    }
+
+    let gdep_diffs = store::get_store_diffs(&new_gdeps, &old_gdeps);
+
+    println!(
+        "\n{} global dependencies upgraded\n",
+        gdep_diffs.len().to_string().blue()
+    );
+
+    for dep_diff in &gdep_diffs {
+        println!("{}: {}", dep_diff.name.blue(), format_ver_change(dep_diff));
     }
 
     Ok(())
@@ -114,18 +169,6 @@ where
     }
 
     result
-}
-
-fn load_saved_system_stores() -> Result<HashMap<String, StorePath>, Error> {
-    let path = get_saved_store_path()?;
-    let file = File::open(path)?;
-    let mut stores: HashMap<String, StorePath> = rmp_serde::decode::from_read(file)?;
-
-    for (name, store) in &mut stores {
-        store.name = name.clone();
-    }
-
-    Ok(stores)
 }
 
 fn get_cache_dir() -> Result<PathBuf, Error> {

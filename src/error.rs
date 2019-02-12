@@ -28,6 +28,12 @@ pub enum Error {
 
     #[fail(display = "message pack deserialization failed")]
     RMPDecode(#[cause] rmp_serde::decode::Error),
+
+    #[fail(display = "failed to execute process")]
+    FailedToExecuteProcess(#[cause] std::io::Error),
+
+    #[fail(display = "process returned bad exit code: {}", _0)]
+    BadProcessExitCode(i32),
 }
 
 impl_err_conv!(Error,

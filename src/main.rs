@@ -2,19 +2,21 @@ mod error;
 mod store;
 
 use crate::error::Error;
-use crate::store::{StoreDiff, SystemPackage};
+use crate::store::{StoreDiff, SystemPackage, SystemPackageMap};
 use clap::clap_app;
 use colored::Colorize;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::PathBuf;
+use std::process::Command;
 
 fn main() {
     let args = clap_app!(nixup =>
         (version: env!("CARGO_PKG_VERSION"))
         (author: env!("CARGO_PKG_AUTHORS"))
         (about: "A tool for NixOS to display which system packages have been updated")
-        (@arg preupdate: -p --preupdate "Must be used before a system update")
+        (@arg save_state: -s --savestate "Save the current system package state, so it can be compared to later with the -f flag")
+        (@arg from_state: -f --fromstate "Use the state saved from the -s flag, instead of fetching the latest one")
     )
     .get_matches();
 
@@ -41,10 +43,18 @@ fn main() {
 }
 
 fn run(args: &clap::ArgMatches) -> Result<(), Error> {
-    if args.is_present("preupdate") {
+    if args.is_present("save_state") {
         save_system_pkgs()?;
+    } else if args.is_present("from_state") {
+        let old_pkgs = get_saved_system_pkgs()?;
+        let new_pkgs = store::parse_system_packages()?;
+        detect_package_diff(new_pkgs, old_pkgs)?;
     } else {
-        detect_package_diff()?;
+        let old_pkgs = store::parse_system_packages()?;
+        perform_dry_rebuild()?;
+        let new_pkgs = store::parse_system_packages()?;
+
+        detect_package_diff(new_pkgs, old_pkgs)?;
     }
 
     Ok(())
@@ -69,7 +79,7 @@ fn save_system_pkgs() -> Result<(), Error> {
     Ok(())
 }
 
-fn load_system_pkgs() -> Result<store::SystemPackageMap, Error> {
+fn get_saved_system_pkgs() -> Result<SystemPackageMap, Error> {
     let path = get_saved_store_path()?;
     let file = File::open(path)?;
 
@@ -83,7 +93,25 @@ fn load_system_pkgs() -> Result<store::SystemPackageMap, Error> {
     Ok(results)
 }
 
-fn detect_package_diff() -> Result<(), Error> {
+fn perform_dry_rebuild() -> Result<(), Error> {
+    let mut cmd = Command::new("nixos-rebuild");
+    cmd.arg("dry-build");
+    cmd.arg("--upgrade");
+
+    let output = cmd.output().map_err(Error::FailedToExecuteProcess)?;
+
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(999);
+        return Err(Error::BadProcessExitCode(code));
+    }
+
+    Ok(())
+}
+
+fn detect_package_diff(
+    mut new_pkgs: SystemPackageMap,
+    mut old_pkgs: SystemPackageMap,
+) -> Result<(), Error> {
     let format_ver_change = |diff: &StoreDiff| {
         let ver_to_str = if cfg!(not(no_colors)) {
             bolden_str_diff(&diff.ver_from, &diff.ver_to)
@@ -94,19 +122,8 @@ fn detect_package_diff() -> Result<(), Error> {
         format!("{} -> {}", diff.ver_from.red(), ver_to_str)
     };
 
-    let (old_pkgs, old_gdeps) = {
-        let mut pkgs = load_system_pkgs()?;
-        let deps = store::isolate_global_dependencies(&mut pkgs)?;
-
-        (pkgs, deps)
-    };
-
-    let (new_pkgs, new_gdeps) = {
-        let mut pkgs = store::parse_system_packages()?;
-        let deps = store::isolate_global_dependencies(&mut pkgs)?;
-
-        (pkgs, deps)
-    };
+    let new_gdeps = store::isolate_global_dependencies(&mut new_pkgs)?;
+    let old_gdeps = store::isolate_global_dependencies(&mut old_pkgs)?;
 
     let pkg_diffs = store::get_package_diffs(&new_pkgs, &old_pkgs);
 

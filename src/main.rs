@@ -95,7 +95,7 @@ where
     let from = from.as_ref();
     let to = to.as_ref();
 
-    let mut result = Vec::with_capacity(to.len());
+    let mut result = String::with_capacity(to.len());
     let mut from_chars = from.chars();
 
     for to_ch in to.chars() {
@@ -104,16 +104,16 @@ where
 
         if let Some(from_ch) = from_ch {
             if from_ch == to_ch {
-                result.push(to_str.to_string());
+                result.push_str(&to_str.to_string());
                 continue;
             }
         }
 
         let to_str = to_str.bright_green().underline().to_string();
-        result.push(to_str);
+        result.push_str(&to_str);
     }
 
-    result.join("")
+    result
 }
 
 fn load_saved_system_stores() -> Result<HashMap<String, StorePath>, Error> {

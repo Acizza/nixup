@@ -128,7 +128,7 @@ fn detect_package_diff(
     let pkg_diffs = store::get_package_diffs(&new_pkgs, &old_pkgs);
 
     println!(
-        "{} system package(s) upgraded\n",
+        "{} system package update(s)\n",
         pkg_diffs.len().to_string().blue()
     );
 
@@ -142,14 +142,14 @@ fn detect_package_diff(
         }
 
         for dep in &diff.deps {
-            println!("  {}: {}", dep.name.blue(), format_ver_change(dep));
+            println!("| {}: {}", dep.name.blue(), format_ver_change(dep));
         }
     }
 
     let gdep_diffs = store::get_store_diffs(&new_gdeps, &old_gdeps);
 
     println!(
-        "\n{} global dependencies upgraded\n",
+        "\n{} global dependency update(s)\n",
         gdep_diffs.len().to_string().blue()
     );
 

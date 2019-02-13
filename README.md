@@ -9,18 +9,19 @@ Example Output
 ```
 3 system package update(s)
 
+curl|bin: 7.63.0 -> 7.64.0
+fish: 2.7.1 -> 3.0.0
+^ db: 4.8.30 -> 5.3.28
+^ pcre2: 10.31 -> 10.32
 wine-wow|staging: 4.0-rc5 -> 4.1
-wpfxm: 0.0.0 -> 0.1.0
-| openssl: 1.0.2q -> 1.1.1a
-gcc: 7.4.0 -> 8.1.0
 
 2 global dependency update(s)
 
+curl: 7.63.0 -> 7.64.0
 glibc: 2.27 -> 2.28
-libX11: 1.6.6 -> 1.6.7
 ```
 
-Note that the openssl update only applies to the wpfxm package. If all packages would have used the same openssl version, then it would have displayed in the global dependency section instead.
+Note that the `db` and `pcre2` updates only apply to the `fish` package. If all system packages used the same version of those dependencies, then they would have showed up in the global dependency section instead.
 
 Usage
 =====

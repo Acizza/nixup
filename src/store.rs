@@ -212,7 +212,7 @@ pub struct StoreDiff {
 }
 
 pub fn get_store_diff(new: &StorePath, old: &StorePath) -> Option<StoreDiff> {
-    if new.version.ends_with(&old.version) {
+    if new.version == old.version {
         return None;
     }
 

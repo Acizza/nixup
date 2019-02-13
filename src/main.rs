@@ -2,9 +2,10 @@ mod error;
 mod store;
 
 use crate::error::Error;
-use crate::store::{StoreDiff, SystemPackage, SystemPackageMap};
+use crate::store::{PackageDiff, StoreDiff, SystemPackage, SystemPackageMap};
 use clap::clap_app;
 use colored::Colorize;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::PathBuf;
@@ -125,39 +126,64 @@ fn detect_package_diff(
     let new_gdeps = store::isolate_global_dependencies(&mut new_pkgs)?;
     let old_gdeps = store::isolate_global_dependencies(&mut old_pkgs)?;
 
-    let pkg_diffs = store::get_package_diffs(&new_pkgs, &old_pkgs);
+    let mut pkg_diffs = store::get_package_diffs(&new_pkgs, &old_pkgs);
+    pkg_diffs.sort_unstable_by(sys_pkg_sorter);
 
     println!(
         "{} system package update(s)\n",
         pkg_diffs.len().to_string().blue()
     );
 
-    for diff in &pkg_diffs {
-        print!("{}: ", diff.name.blue());
+    for mut diff in pkg_diffs {
+        print!("{}", diff.name.blue());
 
-        if let Some(pkg) = &diff.pkg {
-            println!("{}", format_ver_change(pkg));
+        if let Some(pkg) = diff.pkg {
+            println!(": {}", format_ver_change(&pkg));
         } else {
             println!();
         }
 
-        for dep in &diff.deps {
-            println!("| {}: {}", dep.name.blue(), format_ver_change(dep));
+        if diff.deps.is_empty() {
+            continue;
+        }
+
+        diff.deps.sort_unstable_by(|x, y| x.name.cmp(&y.name));
+
+        for dep in diff.deps {
+            println!(
+                "{} {}: {}",
+                "^".yellow(),
+                dep.name.blue(),
+                format_ver_change(&dep)
+            );
         }
     }
 
-    let gdep_diffs = store::get_store_diffs(&new_gdeps, &old_gdeps);
+    let mut gdep_diffs = store::get_store_diffs(&new_gdeps, &old_gdeps);
+    gdep_diffs.sort_unstable_by(|x, y| x.name.cmp(&y.name));
 
     println!(
         "\n{} global dependency update(s)\n",
         gdep_diffs.len().to_string().blue()
     );
 
-    for dep_diff in &gdep_diffs {
-        println!("{}: {}", dep_diff.name.blue(), format_ver_change(dep_diff));
+    for dep_diff in gdep_diffs {
+        println!("{}: {}", dep_diff.name.blue(), format_ver_change(&dep_diff));
     }
 
     Ok(())
+}
+
+fn sys_pkg_sorter(new: &PackageDiff, old: &PackageDiff) -> Ordering {
+    match (&new.pkg, &old.pkg) {
+        (Some(_), Some(_)) | (None, None) => old
+            .deps
+            .len()
+            .cmp(&new.deps.len())
+            .then_with(|| new.name.cmp(&old.name)),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+    }
 }
 
 fn bolden_str_diff<S>(from: S, to: S) -> String

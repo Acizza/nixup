@@ -2,6 +2,7 @@ use crate::error::StoreError;
 use hashbrown::hash_map::Entry;
 use hashbrown::{HashMap, HashSet};
 use lazy_static::lazy_static;
+use rayon::prelude::*;
 use regex::Regex;
 use serde_derive::{Deserialize, Serialize};
 use std::borrow::{Borrow, Cow};
@@ -210,11 +211,12 @@ pub fn parse_system_packages() -> Result<SystemPackageMap, StoreError> {
     let stores = parse_system_stores()?;
     let mut packages = HashMap::with_capacity(stores.len());
 
-    for store in stores {
+    packages.par_extend(stores.into_par_iter().filter_map(|store| {
         let name = store.name.clone();
-        let pkg = SystemPackage::with_deps(store)?;
-        packages.insert(name, pkg);
-    }
+        let pkg = SystemPackage::with_deps(store).ok()?;
+
+        Some((name, pkg))
+    }));
 
     Ok(packages)
 }

@@ -1,10 +1,10 @@
 use crate::error::StoreError;
+use hashbrown::hash_map::Entry;
+use hashbrown::{HashMap, HashSet};
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde_derive::{Deserialize, Serialize};
 use std::borrow::{Borrow, Cow};
-use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;

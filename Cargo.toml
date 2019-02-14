@@ -15,6 +15,10 @@ rmp-serde = "~0.13.0"
 serde = "~1.0.0"
 serde_derive = "~1.0.0"
 
+[dependencies.hashbrown]
+version = "~0.1.0"
+features = [ "serde" ]
+
 [profile.release]
 lto = true
 codegen-units = 1

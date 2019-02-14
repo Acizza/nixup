@@ -2,8 +2,10 @@ use crate::error::StoreError;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde_derive::{Deserialize, Serialize};
-use std::borrow::Cow;
-use std::collections::HashMap;
+use std::borrow::{Borrow, Cow};
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -17,7 +19,25 @@ pub struct StorePath {
     pub version: String,
 }
 
-pub type StorePathMap = HashMap<Name, StorePath>;
+impl Hash for StorePath {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
+}
+
+impl PartialEq for StorePath {
+    fn eq(&self, other: &StorePath) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Borrow<Name> for StorePath {
+    fn borrow(&self) -> &Name {
+        &self.name
+    }
+}
+
+pub type StorePathMap = HashSet<StorePath>;
 
 impl StorePath {
     pub fn parse<P>(path: P) -> Option<StorePath>
@@ -72,12 +92,6 @@ impl StorePath {
     }
 }
 
-impl PartialEq for StorePath {
-    fn eq(&self, other: &StorePath) -> bool {
-        self.name == other.name && self.version == other.version
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SystemPackage {
     pub path: StorePath,
@@ -93,7 +107,7 @@ impl SystemPackage {
     {
         SystemPackage {
             path: path.into(),
-            deps: HashMap::new(),
+            deps: HashSet::new(),
         }
     }
 
@@ -137,7 +151,7 @@ impl SystemPackage {
                 None => continue,
             };
 
-            self.deps.insert(path.name.clone(), path);
+            self.deps.insert(path);
         }
 
         Ok(())
@@ -166,7 +180,7 @@ pub fn parse_system_stores() -> Result<StorePathMap, StoreError> {
         static ref MATCHER: Regex = Regex::new("\"(.+?)\"").unwrap();
     }
 
-    let mut stores = HashMap::<_, StorePath>::new();
+    let mut stores = HashSet::<StorePath>::new();
 
     for split in output.split_whitespace() {
         let caps = match MATCHER.captures(&split) {
@@ -180,13 +194,13 @@ pub fn parse_system_stores() -> Result<StorePathMap, StoreError> {
         };
 
         // We only want to use the latest version of the store
-        if let Some(existing) = stores.get(&store.name) {
+        if let Some(existing) = stores.get(&store) {
             if existing.version > store.version {
                 continue;
             }
         }
 
-        stores.insert(store.name.clone(), store);
+        stores.insert(store);
     }
 
     Ok(stores)
@@ -196,7 +210,8 @@ pub fn parse_system_packages() -> Result<SystemPackageMap, StoreError> {
     let stores = parse_system_stores()?;
     let mut packages = HashMap::with_capacity(stores.len());
 
-    for (name, store) in stores {
+    for store in stores {
+        let name = store.name.clone();
         let pkg = SystemPackage::with_deps(store)?;
         packages.insert(name, pkg);
     }
@@ -228,7 +243,7 @@ pub fn get_store_diff(new: &StorePath, old: &StorePath) -> Option<StoreDiff> {
 pub fn get_store_diffs(new_stores: &StorePathMap, old_stores: &StorePathMap) -> Vec<StoreDiff> {
     let mut diffs = Vec::new();
 
-    for new in new_stores.values() {
+    for new in new_stores {
         let old = match old_stores.get(&new.name) {
             Some(old) => old,
             None => continue,
@@ -280,13 +295,13 @@ pub fn get_package_diffs(new: &SystemPackageMap, old: &SystemPackageMap) -> Vec<
     diffs
 }
 
-struct DependencyScan {
-    last_version: String,
+struct DependencyScan<'a> {
+    last_version: &'a str,
     has_multiple_versions: bool,
 }
 
-impl DependencyScan {
-    fn new(last_version: String, has_multiple_versions: bool) -> DependencyScan {
+impl<'a> DependencyScan<'a> {
+    fn new(last_version: &'a str, has_multiple_versions: bool) -> DependencyScan {
         DependencyScan {
             last_version,
             has_multiple_versions,
@@ -297,43 +312,43 @@ impl DependencyScan {
 pub fn isolate_global_dependencies(
     pkgs: &mut SystemPackageMap,
 ) -> Result<StorePathMap, StoreError> {
-    let mut ver_tracker = HashMap::<_, DependencyScan>::new();
+    let mut ver_tracker = HashMap::<&str, DependencyScan>::new();
 
-    for pkg in pkgs.values() {
-        for (dep_name, dep) in &pkg.deps {
-            match ver_tracker.get_mut(dep_name) {
-                Some(entry) => {
+    for pkg in pkgs.values_mut() {
+        for dep in &pkg.deps {
+            match ver_tracker.entry(&dep.name) {
+                Entry::Occupied(mut entry) => {
+                    let entry = entry.get_mut();
+
                     if dep.version != entry.last_version {
                         entry.has_multiple_versions = true;
-                        continue;
                     }
-
-                    entry.last_version = dep.version.clone();
                 }
-                None => {
-                    ver_tracker.insert(
-                        dep_name.clone(),
-                        DependencyScan::new(dep.version.clone(), false),
-                    );
+                Entry::Vacant(entry) => {
+                    entry.insert(DependencyScan::new(&dep.version, false));
                 }
             }
         }
     }
 
-    let mut global_deps = HashMap::new();
+    let mut global_deps = HashSet::new();
 
-    for (dep_name, dep) in ver_tracker {
-        if dep.has_multiple_versions {
-            continue;
-        }
+    let dep_names = ver_tracker
+        .into_iter()
+        .filter_map(|(n, d)| {
+            if d.has_multiple_versions {
+                None
+            } else {
+                Some(n.to_string())
+            }
+        })
+        .collect::<Vec<_>>();
 
-        for pkg in pkgs.values_mut() {
-            let pkg_dep = match pkg.deps.remove(&dep_name) {
-                Some(dep) => dep,
-                None => continue,
-            };
-
-            global_deps.insert(pkg_dep.name.clone(), pkg_dep);
+    for pkg in pkgs.values_mut() {
+        for name in &dep_names {
+            if let Some(dep) = pkg.deps.take(name) {
+                global_deps.insert(dep);
+            }
         }
     }
 
@@ -395,7 +410,10 @@ mod test {
         for (full, path) in &paths {
             match StorePath::parse(full) {
                 Some(result) => match path {
-                    Some(p) => assert_eq!(result, *p),
+                    Some(p) => {
+                        assert_eq!(result.name, p.name, "name mismatch");
+                        assert_eq!(result.version, p.version, "version mismatch");
+                    }
                     None => assert!(false, "{} was parsed when no result was expected", full),
                 },
                 None if path.is_some() => assert!(false, "{} failed to be parsed", full),

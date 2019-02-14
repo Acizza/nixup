@@ -5,9 +5,9 @@ use lazy_static::lazy_static;
 use rayon::prelude::*;
 use regex::Regex;
 use serde_derive::{Deserialize, Serialize};
-use std::borrow::{Borrow, Cow};
+use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 pub type Name = String;
@@ -47,49 +47,88 @@ impl StorePath {
     {
         let path = path.as_ref();
 
-        // Black magic incoming!
-        lazy_static! {
-            static ref MATCHER: Regex = Regex::new(
-                r"(?P<name>[\w\-\.]+?)-v?(?P<version>\d[\d\.\-a-z_]+?(?:-[a-z]+?\d+)?)(?:\.[a-z]+|-(?P<suffix>[a-z]+)|$)"
-            )
-            .unwrap();
+        let stripped = StorePath::strip(path)?;
+        let mut split_sep = stripped.split('-').collect::<Vec<_>>();
+
+        match split_sep.len() {
+            0 | 1 => return None,
+            2 => {
+                if !StorePath::is_version_str(split_sep[1]) {
+                    return None;
+                }
+
+                let version = split_sep.swap_remove(1).into();
+                let name = split_sep.swap_remove(0).into();
+
+                let store = StorePath {
+                    path: Some(path.into()),
+                    name,
+                    version,
+                };
+
+                return Some(store);
+            }
+            _ => (),
         }
 
-        let stripped_path = StorePath::strip(path)?;
+        let suffix = {
+            let end = split_sep.len() - 1;
 
-        let caps = match MATCHER.captures(&stripped_path) {
-            Some(caps) => caps,
-            None => return None,
+            if split_sep[end].chars().all(char::is_alphabetic) {
+                Some(split_sep.swap_remove(end))
+            } else {
+                None
+            }
         };
 
-        let suffix = caps
-            .name("suffix")
-            .map(|s| Cow::Owned(format!("|{}", s.as_str())))
-            .unwrap_or(Cow::Borrowed(""));
+        let version = {
+            let pos = split_sep
+                .iter()
+                .position(|&s| StorePath::is_version_str(s))?;
+
+            split_sep.drain(pos..).collect::<Vec<_>>().join("-")
+        };
+
+        let mut name = split_sep.join("-");
+
+        if let Some(sfx) = suffix {
+            name.reserve(1 + sfx.len());
+            name.push('|');
+            name.push_str(sfx);
+        }
 
         let store = StorePath {
             path: Some(path.into()),
-            name: format!("{}{}", &caps["name"], suffix),
-            version: caps["version"].into(),
+            name,
+            version,
         };
 
         Some(store)
     }
 
+    fn is_version_str(string: &str) -> bool {
+        if !string.starts_with(|c| char::is_numeric(c) || c == 'v') {
+            return false;
+        }
+
+        string
+            .chars()
+            .all(|c| c.is_numeric() || c == '.' || (c >= 'a' && c <= 'z') || c == '_')
+    }
+
     pub fn strip<P>(path: P) -> Option<String>
     where
-        P: AsRef<Path>,
+        P: Into<String>,
     {
-        let path = path.as_ref();
-        let mut name = path.file_name()?.to_string_lossy();
+        let mut path = path.into();
 
-        match name.find('-') {
-            Some(idx) if name.len() <= idx + 1 => return None,
-            Some(idx) => name.to_mut().replace_range(..=idx, ""),
+        match path.find('-') {
+            Some(idx) if path.len() <= idx + 1 => return None,
+            Some(idx) => path.replace_range(..=idx, ""),
             None => return None,
         }
 
-        Some(name.into_owned())
+        Some(path)
     }
 }
 
@@ -385,7 +424,7 @@ mod test {
                 None,
             ),
             ("/nix/store/123abc-pcre-8.42", mkpath("pcre", "8.42")),
-            ("/nix/store/123abc-dxvk-v0.96", mkpath("dxvk", "0.96")),
+            ("/nix/store/123abc-dxvk-v0.96", mkpath("dxvk", "v0.96")),
             (
                 "/nix/store/123abc-dxvk-6062dfbef4d5c0f061b9f6e342acab54f34e089a",
                 mkpath("dxvk", "6062dfbef4d5c0f061b9f6e342acab54f34e089a"),
@@ -427,6 +466,6 @@ mod test {
     #[test]
     fn strip_store_path() {
         let store = "/nix/store/03lp4drizbh8cl3f9mjysrrzrg3ssakv-glxinfo-8.4.0";
-        assert_eq!(StorePath::parse(store), mkpath("glxinfo", "8.4.0"));
+        assert_eq!(StorePath::strip(store), Some("glxinfo-8.4.0".into()));
     }
 }

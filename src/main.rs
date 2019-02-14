@@ -5,7 +5,6 @@ use crate::error::Error;
 use crate::store::{PackageDiff, StoreDiff, SystemPackage, SystemPackageMap};
 use clap::clap_app;
 use colored::Colorize;
-use hashbrown::HashMap;
 use std::cmp::Ordering;
 use std::fs::{self, File};
 use std::path::PathBuf;
@@ -62,16 +61,10 @@ fn run(args: &clap::ArgMatches) -> Result<(), Error> {
 }
 
 fn save_system_pkgs() -> Result<(), Error> {
-    let packages = {
-        let mut all = store::parse_system_packages()?;
-        let mut cleaned = Vec::with_capacity(all.len());
-
-        for (_, pkg) in all.drain() {
-            cleaned.push(pkg);
-        }
-
-        cleaned
-    };
+    let packages = store::parse_system_packages()?
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect::<Vec<_>>();
 
     let savefile_path = get_saved_store_path()?;
     let mut file = File::create(savefile_path)?;
@@ -84,12 +77,11 @@ fn get_saved_system_pkgs() -> Result<SystemPackageMap, Error> {
     let path = get_saved_store_path()?;
     let file = File::open(path)?;
 
-    let mut packages: Vec<SystemPackage> = rmp_serde::decode::from_read(file)?;
-    let mut results = HashMap::with_capacity(packages.len());
-
-    for pkg in packages.drain(..) {
-        results.insert(pkg.path.name.clone(), pkg);
-    }
+    let packages: Vec<SystemPackage> = rmp_serde::decode::from_read(file)?;
+    let results = packages
+        .into_iter()
+        .map(|pkg| (pkg.path.name.clone(), pkg))
+        .collect::<SystemPackageMap>();
 
     Ok(results)
 }

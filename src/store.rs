@@ -5,6 +5,7 @@ use lazy_static::lazy_static;
 use rayon::prelude::*;
 use regex::Regex;
 use serde_derive::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -48,7 +49,7 @@ impl StorePath {
         let path = path.as_ref();
 
         let stripped = StorePath::strip(path)?;
-        let mut split_sep = stripped.split('-').collect::<Vec<_>>();
+        let mut split_sep = stripped.split('-').collect::<SmallVec<[&str; 4]>>();
 
         match split_sep.len() {
             0 | 1 => return None,
@@ -86,7 +87,13 @@ impl StorePath {
                 .iter()
                 .position(|&s| StorePath::is_version_str(s))?;
 
-            split_sep.drain(pos..).collect::<Vec<_>>().join("-")
+            let ver_str = split_sep[pos..].join("-");
+
+            unsafe {
+                split_sep.set_len(pos);
+            }
+
+            ver_str
         };
 
         let mut name = split_sep.join("-");
@@ -372,8 +379,6 @@ pub fn isolate_global_dependencies(
         }
     }
 
-    let mut global_deps = HashSet::new();
-
     let dep_names = ver_tracker
         .into_iter()
         .filter_map(|(n, d)| {
@@ -383,15 +388,23 @@ pub fn isolate_global_dependencies(
                 Some(n.to_string())
             }
         })
-        .collect::<Vec<_>>();
+        .collect::<SmallVec<[String; 8]>>();
 
-    for pkg in pkgs.values_mut() {
-        for name in &dep_names {
-            if let Some(dep) = pkg.deps.take(name) {
-                global_deps.insert(dep);
+    let global_deps = pkgs
+        .par_iter_mut()
+        .fold(HashSet::new, |mut acc, (_, pkg)| {
+            for name in &dep_names {
+                if let Some(dep) = pkg.deps.take(name) {
+                    acc.insert(dep);
+                }
             }
-        }
-    }
+
+            acc
+        })
+        .reduce(HashSet::new, |mut acc, x| {
+            acc.extend(x);
+            acc
+        });
 
     Ok(global_deps)
 }

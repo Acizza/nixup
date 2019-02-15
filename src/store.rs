@@ -1,9 +1,7 @@
 use crate::error::StoreError;
 use hashbrown::hash_map::Entry;
 use hashbrown::{HashMap, HashSet};
-use lazy_static::lazy_static;
 use rayon::prelude::*;
-use regex::Regex;
 use serde_derive::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::borrow::Borrow;
@@ -223,19 +221,16 @@ pub fn parse_system_stores() -> Result<StorePathMap, StoreError> {
         }
     };
 
-    lazy_static! {
-        static ref MATCHER: Regex = Regex::new("\"(.+?)\"").unwrap();
-    }
-
     let mut stores = HashSet::<StorePath>::new();
 
     for split in output.split_whitespace() {
-        let caps = match MATCHER.captures(&split) {
-            Some(caps) => caps,
-            None => continue,
-        };
+        if !split.starts_with('\"') || !split.ends_with('\"') {
+            continue;
+        }
 
-        let store = match StorePath::parse(&caps[1]) {
+        let path = &split[1..split.len() - 1];
+
+        let store = match StorePath::parse(path) {
             Some(store) => store,
             None => continue,
         };

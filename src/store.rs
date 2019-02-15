@@ -269,6 +269,12 @@ pub struct StoreDiff {
     pub ver_to: String,
 }
 
+impl PartialEq for StoreDiff {
+    fn eq(&self, other: &StoreDiff) -> bool {
+        self.name == other.name
+    }
+}
+
 pub fn get_store_diff(new: &StorePath, old: &StorePath) -> Option<StoreDiff> {
     if new.version == old.version {
         return None;
@@ -408,15 +414,37 @@ pub fn isolate_global_dependencies(
 mod test {
     use super::*;
 
-    fn mkpath<S>(name: S, ver: S) -> Option<StorePath>
+    fn mkstore<S>(name: S, ver: S) -> StorePath
     where
         S: Into<String>,
     {
-        Some(StorePath {
+        StorePath {
             path: None,
             name: name.into(),
             version: ver.into(),
-        })
+        }
+    }
+
+    fn mkstorediff<S>(name: S, from: S, to: S) -> StoreDiff
+    where
+        S: Into<String>,
+    {
+        StoreDiff {
+            name: name.into(),
+            ver_from: from.into(),
+            ver_to: to.into(),
+        }
+    }
+
+    fn mksyspkg<P, V>(path: P, deps: V) -> SystemPackage
+    where
+        P: Into<StorePath>,
+        V: Into<StorePathMap>,
+    {
+        SystemPackage {
+            path: path.into(),
+            deps: deps.into(),
+        }
     }
 
     #[test]
@@ -424,35 +452,38 @@ mod test {
         let paths = [
             (
                 "/nix/store/123abc-glxinfo-8.4.0",
-                mkpath("glxinfo", "8.4.0"),
+                Some(mkstore("glxinfo", "8.4.0")),
             ),
             ("/nix/store/123abc-fix-static.patch", None),
             (
                 "/nix/store/123abc-nix-wallpaper-simple-dark-gray_bottom.png.drv",
                 None,
             ),
-            ("/nix/store/123abc-pcre-8.42", mkpath("pcre", "8.42")),
-            ("/nix/store/123abc-dxvk-v0.96", mkpath("dxvk", "v0.96")),
+            ("/nix/store/123abc-pcre-8.42", Some(mkstore("pcre", "8.42"))),
+            (
+                "/nix/store/123abc-dxvk-v0.96",
+                Some(mkstore("dxvk", "v0.96")),
+            ),
             (
                 "/nix/store/123abc-dxvk-6062dfbef4d5c0f061b9f6e342acab54f34e089a",
-                mkpath("dxvk", "6062dfbef4d5c0f061b9f6e342acab54f34e089a"),
+                Some(mkstore("dxvk", "6062dfbef4d5c0f061b9f6e342acab54f34e089a")),
             ),
             (
                 "/nix/store/123abc-rpcs3-7788-4c59395",
-                mkpath("rpcs3", "7788-4c59395"),
+                Some(mkstore("rpcs3", "7788-4c59395")),
             ),
-            ("/nix/store/123abc-gcc-7.4.0", mkpath("gcc", "7.4.0")),
+            ("/nix/store/123abc-gcc-7.4.0", Some(mkstore("gcc", "7.4.0"))),
             (
                 "/nix/store/123abc-steam-runtime-2016-08-26",
-                mkpath("steam-runtime", "2016-08-26"),
+                Some(mkstore("steam-runtime", "2016-08-26")),
             ),
             (
                 "/nix/store/123abc-wine-wow-4.0-rc5-staging",
-                mkpath("wine-wow|staging", "4.0-rc5"),
+                Some(mkstore("wine-wow|staging", "4.0-rc5")),
             ),
             (
                 "/nix/store/123abc-ffmpeg-3.4.5-bin",
-                mkpath("ffmpeg|bin", "3.4.5"),
+                Some(mkstore("ffmpeg|bin", "3.4.5")),
             ),
         ];
 
@@ -475,5 +506,114 @@ mod test {
     fn strip_store_path() {
         let store = "/nix/store/03lp4drizbh8cl3f9mjysrrzrg3ssakv-glxinfo-8.4.0";
         assert_eq!(StorePath::strip(store), Some("glxinfo-8.4.0".into()));
+    }
+
+    #[test]
+    fn detect_store_diffs() {
+        let new_stores = vec![
+            mkstore("glxinfo", "8.5.0"),
+            mkstore("ffmpeg", "3.4.5"),
+            mkstore("wine-wow|staging", "4.1"),
+            mkstore("steam-runtime", "2019-02-15"),
+            mkstore("dxvk", "v0.96"),
+        ]
+        .into_iter()
+        .collect::<StorePathMap>();
+
+        let old_stores = vec![
+            mkstore("glxinfo", "8.4.0"),
+            mkstore("ffmpeg", "3.4.5"),
+            mkstore("wine-wow|staging", "4.0-rc5"),
+            mkstore("steam-runtime", "2016-08-26"),
+            mkstore("dxvk", "v0.96"),
+        ]
+        .into_iter()
+        .collect::<StorePathMap>();
+
+        let expected_diffs = vec![
+            mkstorediff("glxinfo", "8.4.0", "8.5.0"),
+            mkstorediff("wine-wow|staging", "4.0-rc5", "4.1"),
+            mkstorediff("steam-runtime", "2016-08-26", "2019-02-15"),
+        ];
+
+        let diffs = get_store_diffs(&new_stores, &old_stores);
+
+        assert!(
+            diffs.len() == expected_diffs.len(),
+            "actual number of diffs does not match expected"
+        );
+
+        for diff in diffs {
+            let expected = expected_diffs
+                .iter()
+                .find(|&x| x == &diff)
+                .expect(&format!("expected diff not found! {:?}", diff.name));
+
+            assert_eq!(diff.ver_from, expected.ver_from, "from version mismatch");
+            assert_eq!(diff.ver_to, expected.ver_to, "to version mismatch");
+        }
+    }
+
+    #[test]
+    fn separate_global_deps() {
+        let mut pkgs = vec![
+            mksyspkg(
+                mkstore("test1", "1"),
+                vec![mkstore("db", "4.8.30"), mkstore("glibc", "2.27")]
+                    .into_iter()
+                    .collect::<StorePathMap>(),
+            ),
+            mksyspkg(
+                mkstore("test2", "1"),
+                vec![mkstore("db", "5.0.0"), mkstore("glibc", "2.27")]
+                    .into_iter()
+                    .collect::<StorePathMap>(),
+            ),
+            mksyspkg(
+                mkstore("test3", "1"),
+                vec![mkstore("db", "4.8.30"), mkstore("glibc", "2.27")]
+                    .into_iter()
+                    .collect::<StorePathMap>(),
+            ),
+        ]
+        .into_iter()
+        .map(|x| (x.path.name.clone(), x))
+        .collect::<SystemPackageMap>();
+
+        let expected_global_dep = mkstore("glibc", "2.27");
+        let expected_pkg_dep = [mkstore("db", "4.8.30"), mkstore("db", "5.0.0")];
+
+        let global_deps =
+            isolate_global_dependencies(&mut pkgs).expect("failed to isolate global dependencies");
+
+        assert!(global_deps.len() == 1, "global dependency length mismatch");
+
+        let global_dep = global_deps
+            .get(&expected_global_dep.name)
+            .expect("failed to get expected global dependency");
+
+        assert_eq!(global_dep.name, expected_global_dep.name, "name mismatch");
+        assert_eq!(
+            global_dep.version, expected_global_dep.version,
+            "version mismatch"
+        );
+
+        for pkg in pkgs.values() {
+            let found = pkg.deps.iter().find(|pkg_dep| {
+                for dep in &expected_pkg_dep {
+                    if dep.name == pkg_dep.name && dep.version == pkg_dep.version {
+                        return true;
+                    }
+                }
+
+                false
+            });
+
+            assert!(
+                found.is_some(),
+                "failed to find package-specific dependency for {}",
+                pkg.path.name
+            );
+        }
     }
 }

@@ -48,16 +48,28 @@ fn run(args: &clap::ArgMatches) -> Result<(), Error> {
     } else if args.is_present("from_state") {
         let old_pkgs = get_saved_system_pkgs()?;
         let new_pkgs = store::parse_system_packages()?;
-        detect_package_diff(new_pkgs, old_pkgs)?;
+        display_package_diff(new_pkgs, old_pkgs)?;
     } else {
-        let old_pkgs = store::parse_system_packages()?;
-        perform_dry_rebuild()?;
-        let new_pkgs = store::parse_system_packages()?;
-
-        detect_package_diff(new_pkgs, old_pkgs)?;
+        display_updates_from_cur_state()?;
     }
 
     Ok(())
+}
+
+fn display_updates_from_cur_state() -> Result<(), Error> {
+    let euid = unsafe { libc::geteuid() };
+
+    // We have to be running as root in this mode, otherwise NixOS will
+    // only fetch updates for user packages when we perform a dry rebuild
+    if euid != 0 {
+        return Err(Error::MustRunAsRoot);
+    }
+
+    let old_pkgs = store::parse_system_packages()?;
+    perform_dry_rebuild()?;
+    let new_pkgs = store::parse_system_packages()?;
+
+    display_package_diff(new_pkgs, old_pkgs)
 }
 
 fn save_system_pkgs() -> Result<(), Error> {
@@ -101,7 +113,7 @@ fn perform_dry_rebuild() -> Result<(), Error> {
     Ok(())
 }
 
-fn detect_package_diff(
+fn display_package_diff(
     mut new_pkgs: SystemPackageMap,
     mut old_pkgs: SystemPackageMap,
 ) -> Result<(), Error> {

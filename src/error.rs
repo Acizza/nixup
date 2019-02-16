@@ -34,6 +34,9 @@ pub enum Error {
 
     #[fail(display = "process returned bad exit code: {}", _0)]
     BadProcessExitCode(i32),
+
+    #[fail(display = "program must be running as root")]
+    MustRunAsRoot,
 }
 
 impl_err_conv!(Error,

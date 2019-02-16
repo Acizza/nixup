@@ -112,13 +112,36 @@ impl StorePath {
     }
 
     fn is_version_str(string: &str) -> bool {
-        if !string.starts_with(|c| char::is_numeric(c) || c == 'v') {
+        fn is_digit(b: u8) -> bool {
+            b >= b'0' && b <= b'9'
+        }
+
+        if string.is_empty() {
             return false;
         }
 
-        string
-            .chars()
-            .all(|c| c.is_numeric() || c == '.' || (c >= 'a' && c <= 'z') || c == '_')
+        let mut bytes = string.as_bytes();
+
+        match bytes[0] {
+            b'v' => {
+                if bytes.len() < 2 || !is_digit(bytes[1]) {
+                    return false;
+                }
+
+                bytes = &bytes[1..];
+            }
+            b => {
+                if !is_digit(b) {
+                    return false;
+                }
+            }
+        }
+
+        bytes.iter().all(|&c| match c {
+            c if is_digit(c) => true,
+            b'.' | b'a'..=b'z' | b'_' => true,
+            _ => false,
+        })
     }
 
     pub fn strip<P>(path: P) -> Option<String>
@@ -484,6 +507,14 @@ mod test {
             (
                 "/nix/store/123abc-ffmpeg-3.4.5-bin",
                 Some(mkstore("ffmpeg|bin", "3.4.5")),
+            ),
+            (
+                "/nix/store/123abc-vulkan-loader-1.1.85",
+                Some(mkstore("vulkan-loader", "1.1.85")),
+            ),
+            (
+                "/nix/store/123abc-vpnc-0.5.3-post-r550",
+                Some(mkstore("vpnc", "0.5.3-post-r550")),
             ),
         ];
 

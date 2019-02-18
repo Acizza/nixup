@@ -3,8 +3,9 @@ mod error;
 mod store;
 
 use crate::error::Error;
-use crate::store::{SystemPackage, SystemPackageMap};
+use crate::store::{StorePath, SystemPackageMap};
 use clap::clap_app;
+use serde_derive::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::path::PathBuf;
 use std::process::Command;
@@ -43,11 +44,13 @@ fn main() {
 
 fn run(args: &clap::ArgMatches) -> Result<(), Error> {
     if args.is_present("save_state") {
-        save_system_pkgs()?;
+        let state = PackageState::get_current()?;
+        state.save()?;
     } else if args.is_present("from_state") {
-        let old_pkgs = get_saved_system_pkgs()?;
-        let new_pkgs = store::parse_system_packages()?;
-        display::package_diffs(new_pkgs, old_pkgs)?;
+        let old_state = PackageState::load()?;
+        let cur_state = PackageState::get_current()?;
+
+        display::package_diffs(cur_state, old_state)?;
     } else {
         display_updates_from_cur_state()?;
     }
@@ -64,37 +67,49 @@ fn display_updates_from_cur_state() -> Result<(), Error> {
         return Err(Error::MustRunAsRoot);
     }
 
-    let old_pkgs = store::parse_system_packages()?;
+    let old_state = PackageState::get_current()?;
     perform_dry_rebuild()?;
-    let new_pkgs = store::parse_system_packages()?;
+    let new_state = PackageState::get_current()?;
 
-    display::package_diffs(new_pkgs, old_pkgs)
+    display::package_diffs(new_state, old_state)
 }
 
-fn save_system_pkgs() -> Result<(), Error> {
-    let packages = store::parse_system_packages()?
-        .into_iter()
-        .map(|(_, v)| v)
-        .collect::<Vec<_>>();
-
-    let savefile_path = get_saved_store_path()?;
-    let mut file = File::create(savefile_path)?;
-    rmp_serde::encode::write(&mut file, &packages)?;
-
-    Ok(())
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PackageState {
+    pub kernel: StorePath,
+    pub packages: SystemPackageMap,
 }
 
-fn get_saved_system_pkgs() -> Result<SystemPackageMap, Error> {
-    let path = get_saved_store_path()?;
-    let file = File::open(path)?;
+impl PackageState {
+    fn get_current() -> Result<PackageState, Error> {
+        let kernel = store::parse_kernel_store()?;
+        let packages = store::parse_system_packages()?;
 
-    let packages: Vec<SystemPackage> = rmp_serde::decode::from_read(file)?;
-    let results = packages
-        .into_iter()
-        .map(|pkg| (pkg.path.name.clone(), pkg))
-        .collect::<SystemPackageMap>();
+        Ok(PackageState { kernel, packages })
+    }
 
-    Ok(results)
+    fn save(&self) -> Result<(), Error> {
+        let path = PackageState::get_save_path()?;
+        let mut file = File::create(path)?;
+
+        rmp_serde::encode::write(&mut file, self)?;
+
+        Ok(())
+    }
+
+    fn load() -> Result<PackageState, Error> {
+        let path = PackageState::get_save_path()?;
+        let file = File::open(path)?;
+
+        let state = rmp_serde::decode::from_read(file)?;
+
+        Ok(state)
+    }
+
+    fn get_save_path() -> Result<PathBuf, Error> {
+        let path = get_cache_dir()?.join("package_state.mpack");
+        Ok(path)
+    }
 }
 
 fn perform_dry_rebuild() -> Result<(), Error> {
@@ -122,9 +137,4 @@ fn get_cache_dir() -> Result<PathBuf, Error> {
     }
 
     Ok(dir)
-}
-
-fn get_saved_store_path() -> Result<PathBuf, Error> {
-    let path = get_cache_dir()?.join("saved_stores.mpack");
-    Ok(path)
 }

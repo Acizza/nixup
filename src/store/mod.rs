@@ -227,6 +227,26 @@ impl SystemPackage {
     }
 }
 
+pub fn parse_kernel_store() -> Result<StorePath, StoreError> {
+    let mut cmd = Command::new("nix-store");
+    cmd.arg("-qR");
+    cmd.arg("/nix/var/nix/profiles/system/kernel");
+
+    let output = {
+        let output = cmd.output()?;
+        String::from_utf8(output.stdout)?
+    };
+
+    let path = output
+        .lines()
+        .next()
+        .ok_or(StoreError::UnexpectedKernelEOF)?;
+
+    let store = StorePath::parse(path).ok_or(StoreError::FailedToParseKernel)?;
+
+    Ok(store)
+}
+
 pub fn parse_system_stores() -> Result<StorePathMap, StoreError> {
     let mut cmd = Command::new("nix-store");
     cmd.arg("-q");

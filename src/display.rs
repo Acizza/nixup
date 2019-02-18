@@ -1,27 +1,40 @@
+use super::PackageState;
 use crate::error::Error;
 use crate::store::diff::{self, PackageDiff, StoreDiff};
-use crate::store::SystemPackageMap;
 use colored::Colorize;
 use std::cmp::Ordering;
 
 pub fn package_diffs(
-    mut new_pkgs: SystemPackageMap,
-    mut old_pkgs: SystemPackageMap,
+    mut cur_state: PackageState,
+    mut old_state: PackageState,
 ) -> Result<(), Error> {
-    let new_gdeps = diff::remove_global_deps(&mut new_pkgs)?;
-    let old_gdeps = diff::remove_global_deps(&mut old_pkgs)?;
+    let gdep_diffs = {
+        let new = diff::remove_global_deps(&mut cur_state.packages)?;
+        let old = diff::remove_global_deps(&mut old_state.packages)?;
 
-    let mut pkg_diffs = diff::get_package_diffs(&new_pkgs, &old_pkgs);
-    pkg_diffs.sort_unstable_by(sys_pkg_sorter);
+        let mut diffs = diff::get_store_diffs(&new, &old);
+        diffs.sort_unstable_by(|x, y| x.name.cmp(&y.name));
+        diffs
+    };
 
-    println!("{} package update(s)\n", pkg_diffs.len().to_string().blue());
+    let pkg_diffs = {
+        let mut diffs = diff::get_package_diffs(&cur_state.packages, &old_state.packages);
+        diffs.sort_unstable_by(sys_pkg_sorter);
+        diffs
+    };
 
-    for diff in pkg_diffs {
-        display_diff(diff);
+    let kernel_diff = diff::get_store_diff(&cur_state.kernel, &old_state.kernel);
+
+    let num_updates = pkg_diffs.len() + (kernel_diff.is_some() as usize);
+    println!("{} package update(s)\n", num_updates.to_string().blue());
+
+    if let Some(kernel_diff) = kernel_diff {
+        display_store_diff(&kernel_diff);
     }
 
-    let mut gdep_diffs = diff::get_store_diffs(&new_gdeps, &old_gdeps);
-    gdep_diffs.sort_unstable_by(|x, y| x.name.cmp(&y.name));
+    for diff in pkg_diffs {
+        display_pkg_diff(diff);
+    }
 
     println!(
         "\n{} global dependency update(s)\n",
@@ -35,13 +48,14 @@ pub fn package_diffs(
     Ok(())
 }
 
-fn display_diff(mut diff: PackageDiff) {
-    print!("{}", diff.name.blue());
+fn display_store_diff(diff: &StoreDiff) {
+    println!("{}: {}", diff.name.blue(), format_ver_change(diff));
+}
 
-    if let Some(pkg) = diff.pkg {
-        println!(": {}", format_ver_change(&pkg));
-    } else {
-        println!();
+fn display_pkg_diff(mut diff: PackageDiff) {
+    match diff.pkg {
+        Some(pkg) => display_store_diff(&pkg),
+        None => println!("{}", diff.name.blue()),
     }
 
     if diff.deps.is_empty() {

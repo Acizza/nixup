@@ -53,6 +53,12 @@ pub enum StoreError {
 
     #[fail(display = "utf8 error")]
     Utf8(#[cause] std::string::FromUtf8Error),
+
+    #[fail(display = "unexpected EOF while reading kernel version")]
+    UnexpectedKernelEOF,
+
+    #[fail(display = "failed to parse kernel store")]
+    FailedToParseKernel,
 }
 
 impl_err_conv!(StoreError,

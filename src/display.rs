@@ -1,5 +1,6 @@
 use crate::error::Error;
-use crate::store::{self, PackageDiff, StoreDiff, SystemPackageMap};
+use crate::store::diff::{self, PackageDiff, StoreDiff};
+use crate::store::SystemPackageMap;
 use colored::Colorize;
 use std::cmp::Ordering;
 
@@ -7,10 +8,10 @@ pub fn package_diffs(
     mut new_pkgs: SystemPackageMap,
     mut old_pkgs: SystemPackageMap,
 ) -> Result<(), Error> {
-    let new_gdeps = store::isolate_global_dependencies(&mut new_pkgs)?;
-    let old_gdeps = store::isolate_global_dependencies(&mut old_pkgs)?;
+    let new_gdeps = diff::remove_global_deps(&mut new_pkgs)?;
+    let old_gdeps = diff::remove_global_deps(&mut old_pkgs)?;
 
-    let mut pkg_diffs = store::get_package_diffs(&new_pkgs, &old_pkgs);
+    let mut pkg_diffs = diff::get_package_diffs(&new_pkgs, &old_pkgs);
     pkg_diffs.sort_unstable_by(sys_pkg_sorter);
 
     println!("{} package update(s)\n", pkg_diffs.len().to_string().blue());
@@ -19,7 +20,7 @@ pub fn package_diffs(
         display_diff(diff);
     }
 
-    let mut gdep_diffs = store::get_store_diffs(&new_gdeps, &old_gdeps);
+    let mut gdep_diffs = diff::get_store_diffs(&new_gdeps, &old_gdeps);
     gdep_diffs.sort_unstable_by(|x, y| x.name.cmp(&y.name));
 
     println!(

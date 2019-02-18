@@ -52,7 +52,7 @@ impl StorePath {
         match split_sep.len() {
             0 | 1 => return None,
             2 => {
-                if !StorePath::is_version_str(split_sep[1]) {
+                if !split_sep[1].chars().any(char::is_numeric) {
                     return None;
                 }
 
@@ -477,6 +477,10 @@ mod test {
             (
                 "/nix/store/123abc-dxvk-6062dfbef4d5c0f061b9f6e342acab54f34e089a",
                 Some(mkstore("dxvk", "6062dfbef4d5c0f061b9f6e342acab54f34e089a")),
+            ),
+            (
+                "/nix/store/123abc-dxvk-fe781df591465b196ae273bf9f110797274d84bd",
+                Some(mkstore("dxvk", "fe781df591465b196ae273bf9f110797274d84bd")),
             ),
             (
                 "/nix/store/123abc-rpcs3-7788-4c59395",

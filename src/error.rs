@@ -53,9 +53,6 @@ pub enum StoreError {
 
     #[fail(display = "utf8 error")]
     Utf8(#[cause] std::string::FromUtf8Error),
-
-    #[fail(display = "received unexpected command output")]
-    MalformedOutput,
 }
 
 impl_err_conv!(StoreError,

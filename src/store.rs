@@ -227,42 +227,29 @@ impl SystemPackage {
 }
 
 pub fn parse_system_stores() -> Result<StorePathMap, StoreError> {
-    let mut cmd = Command::new("nixos-option");
-    cmd.arg("environment.systemPackages");
+    let mut cmd = Command::new("nix-store");
+    cmd.arg("-q");
+    cmd.arg("--references");
+    cmd.arg("/nix/var/nix/profiles/system/sw/");
 
     let output = {
         let output = cmd.output()?;
-        let mut content = String::from_utf8(output.stdout)?;
-
-        match (content.find("[ "), content.find(']')) {
-            (Some(start), Some(end)) => {
-                content.replace_range(end.., "");
-                content.replace_range(..start + "[ ".len(), "");
-                content
-            }
-            _ => return Err(StoreError::MalformedOutput),
-        }
+        String::from_utf8(output.stdout)?
     };
 
     let mut stores = HashSet::<StorePath>::new();
+    let mut duplicates = HashSet::<String>::new();
 
-    for split in output.split_whitespace() {
-        if !split.starts_with('\"') || !split.ends_with('\"') {
-            continue;
-        }
-
-        let path = &split[1..split.len() - 1];
-
+    for path in output.lines() {
         let store = match StorePath::parse(path) {
             Some(store) => store,
             None => continue,
         };
 
-        // We only want to use the latest version of the store
-        if let Some(existing) = stores.get(&store) {
-            if existing.version > store.version {
-                continue;
-            }
+        if stores.contains(&store) {
+            stores.remove(&store.name);
+            duplicates.insert(store.name);
+            continue;
         }
 
         stores.insert(store);

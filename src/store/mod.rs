@@ -196,8 +196,6 @@ impl SystemPackage {
             None => return Ok(()),
         };
 
-        self.deps.clear();
-
         let mut cmd = Command::new("nix-store");
         cmd.arg("-qR");
         cmd.arg(path);
@@ -214,17 +212,38 @@ impl SystemPackage {
             content
         };
 
-        for raw_path in output.lines() {
-            let path = match StorePath::parse(raw_path) {
-                Some(path) => path,
-                None => continue,
-            };
-
-            self.deps.insert(path);
-        }
-
+        self.deps = parse_unique_stores(output.lines());
         Ok(())
     }
+}
+
+fn parse_unique_stores<'a, I>(paths: I) -> StorePathMap
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut stores = HashSet::<StorePath>::new();
+    let mut duplicates = HashSet::<String>::new();
+
+    for path in paths {
+        let store = match StorePath::parse(path) {
+            Some(store) => store,
+            None => continue,
+        };
+
+        if duplicates.contains(&store.name) {
+            continue;
+        }
+
+        if stores.contains(&store.name) {
+            stores.remove(&store);
+            duplicates.insert(store.name);
+            continue;
+        }
+
+        stores.insert(store);
+    }
+
+    stores
 }
 
 pub fn parse_kernel_store() -> Result<StorePath, StoreError> {
@@ -258,24 +277,7 @@ pub fn parse_system_stores() -> Result<StorePathMap, StoreError> {
         String::from_utf8(output.stdout)?
     };
 
-    let mut stores = HashSet::<StorePath>::new();
-    let mut duplicates = HashSet::<String>::new();
-
-    for path in output.lines() {
-        let store = match StorePath::parse(path) {
-            Some(store) => store,
-            None => continue,
-        };
-
-        if stores.contains(&store) {
-            stores.remove(&store.name);
-            duplicates.insert(store.name);
-            continue;
-        }
-
-        stores.insert(store);
-    }
-
+    let stores = parse_unique_stores(output.lines());
     Ok(stores)
 }
 

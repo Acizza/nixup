@@ -108,11 +108,11 @@ where
 
     for to_ch in to.chars() {
         let from_ch = from_chars.next();
-        let to_str = to_ch.to_string().green();
+        let to_str = to_ch.to_string();
 
         if let Some(from_ch) = from_ch {
             if from_ch == to_ch {
-                result.push_str(&to_str.to_string());
+                result.push_str(&to_str.green().to_string());
                 continue;
             }
         }

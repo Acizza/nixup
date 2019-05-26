@@ -27,17 +27,14 @@ Note that the `db` and `pcre2` updates only apply to the `fish` package. If all 
 Usage
 =====
 
-There are two modes for checking for updates:
+Due to the nature of how NixOS handles updates, you can only see which packages were updated after you update your system, and you must run the tool before you update in order to save the current system package state.
 
-1. Before an update, by launching with no arguments
-2. After an update, by saving the system package state *before* updating the system
+To save the current package state, run the program with the `-s` flag. Note that you don't necessarily have to save the package state before every update; so you could, for example, run it once a week or month if you'd rather see all of the updates made over that kind of time period.
 
-Mode 1 is useful if you only want a quick rundown of which system packages will be updated, and do not care about which dependencies of those packages will be updated. You must run the program as root in order to use this mode, as it does a dry rebuild of the system.
+After you have updated your system, you can simply run the program without any arguments and it will display any package updates that have been made since the package state was last saved.
 
-Mode 2 will display what dependencies of every system package have been updated. To use mode 2, first run the program with the `-s` flag *before* updating the system. This will generate a list of the current system packages and their dependencies and save it to `~/.cache/nixup/package_state.mpack`. After updating the system (and not necessarily rebooting), run the program with the `-f` flag and the program will load the saved package state and display the updates between it and the current package set.
-
-For a complete example of the program being used in an update script, see here:
+For a small example of the program being used in an update script, see here:
 https://gitlab.com/Acizza/dotfiles/blob/desktop/updatesys.sh
 
-If you'd like to use this package as part of your system overlay, you can find a Nix package for it here:
+If you'd like to use this program in your system overlay, you can find a Nix package definition for it here:
 https://gitlab.com/Acizza/nixos-config/blob/desktop/overlays/pkgs/nixup.nix

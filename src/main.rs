@@ -8,15 +8,13 @@ use clap::clap_app;
 use serde_derive::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::path::PathBuf;
-use std::process::Command;
 
 fn main() {
     let args = clap_app!(nixup =>
         (version: env!("CARGO_PKG_VERSION"))
         (author: env!("CARGO_PKG_AUTHORS"))
         (about: "A tool for NixOS to display which system packages have been updated")
-        (@arg save_state: -s --savestate "Save the current system package state, so it can be compared to later with the -f flag")
-        (@arg from_state: -f --fromstate "Use the state saved from the -s flag, instead of fetching the latest one")
+        (@arg save_state: -s --save "Save the current system package state. Run with this flag before a system update and without any flags afterwards to see what was updated.")
     )
     .get_matches();
 
@@ -46,32 +44,14 @@ fn run(args: &clap::ArgMatches) -> Result<(), Error> {
     if args.is_present("save_state") {
         let state = PackageState::get_current()?;
         state.save()?;
-    } else if args.is_present("from_state") {
+    } else {
         let old_state = PackageState::load()?;
         let cur_state = PackageState::get_current()?;
 
         display::package_diffs(cur_state, old_state)?;
-    } else {
-        display_updates_from_cur_state()?;
     }
 
     Ok(())
-}
-
-fn display_updates_from_cur_state() -> Result<(), Error> {
-    let euid = unsafe { libc::geteuid() };
-
-    // We have to be running as root in this mode, otherwise NixOS will
-    // only fetch updates for user packages when we perform a dry rebuild
-    if euid != 0 {
-        return Err(Error::MustRunAsRoot);
-    }
-
-    let old_state = PackageState::get_current()?;
-    perform_dry_rebuild()?;
-    let new_state = PackageState::get_current()?;
-
-    display::package_diffs(new_state, old_state)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -110,21 +90,6 @@ impl PackageState {
         let path = get_cache_dir()?.join("package_state.mpack");
         Ok(path)
     }
-}
-
-fn perform_dry_rebuild() -> Result<(), Error> {
-    let mut cmd = Command::new("nixos-rebuild");
-    cmd.arg("dry-build");
-    cmd.arg("--upgrade");
-
-    let output = cmd.output().map_err(Error::FailedToExecuteProcess)?;
-
-    if !output.status.success() {
-        let code = output.status.code().unwrap_or(999);
-        return Err(Error::BadProcessExitCode(code));
-    }
-
-    Ok(())
 }
 
 fn get_cache_dir() -> Result<PathBuf, Error> {

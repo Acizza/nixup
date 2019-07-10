@@ -1,11 +1,10 @@
 [package]
 name = "nixup"
 version = "0.0.0"
-authors = ["Acizza <jgit@tuta.io>"]
+authors = [ "Acizza <jgit@tuta.io>" ]
 edition = "2018"
 
 [dependencies]
-clap = "~2.33.0"
 colored = "~1.8.0"
 dirs = "~2.0.0"
 rayon = "~1.1.0"
@@ -15,13 +14,18 @@ serde_derive = "~1.0.0"
 smallvec = "~0.6.0"
 snafu = "~0.4.0"
 
+[dependencies.clap]
+version = "~2.33.0"
+default-features = false
+features = [ "vec_map" ]
+
 [dependencies.hashbrown]
 version = "~0.5.0"
-features = ["serde", "rayon"]
+features = [ "serde", "rayon" ]
 
 [profile.release]
 lto = true
 codegen-units = 1
 
 [features]
-no_colors = ["colored/no-color"]
+no_colors = [ "colored/no-color" ]

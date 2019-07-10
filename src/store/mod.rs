@@ -1,10 +1,11 @@
 pub mod diff;
 
-use crate::error::StoreError;
+use crate::err::{self, Result};
 use hashbrown::{HashMap, HashSet};
 use rayon::prelude::*;
 use serde_derive::{Deserialize, Serialize};
 use smallvec::SmallVec;
+use snafu::{OptionExt, ResultExt};
 use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -180,7 +181,7 @@ impl SystemPackage {
         }
     }
 
-    pub fn with_deps<P>(path: P) -> Result<SystemPackage, StoreError>
+    pub fn with_deps<P>(path: P) -> Result<SystemPackage>
     where
         P: Into<StorePath>,
     {
@@ -190,7 +191,7 @@ impl SystemPackage {
         Ok(package)
     }
 
-    pub fn parse_deps(&mut self) -> Result<(), StoreError> {
+    pub fn parse_deps(&mut self) -> Result<()> {
         let path = match &self.path.path {
             Some(path) => path,
             None => return Ok(()),
@@ -201,7 +202,7 @@ impl SystemPackage {
         cmd.arg(path);
 
         let output = {
-            let output = cmd.output()?;
+            let output = cmd.output().context(err::CommandIO { cmd })?;
             let mut content = String::from_utf8(output.stdout)?;
 
             // The last line contains the current package, so strip it from the output
@@ -246,34 +247,30 @@ where
     stores
 }
 
-pub fn parse_kernel_store() -> Result<StorePath, StoreError> {
+pub fn parse_kernel_store() -> Result<StorePath> {
     let mut cmd = Command::new("nix-store");
     cmd.arg("-qR");
     cmd.arg("/nix/var/nix/profiles/system/kernel");
 
     let output = {
-        let output = cmd.output()?;
+        let output = cmd.output().context(err::CommandIO { cmd })?;
         String::from_utf8(output.stdout)?
     };
 
-    let path = output
-        .lines()
-        .next()
-        .ok_or(StoreError::UnexpectedKernelEOF)?;
-
-    let store = StorePath::parse(path).ok_or(StoreError::FailedToParseKernel)?;
+    let path = output.lines().next().context(err::GetKernelStore)?;
+    let store = StorePath::parse(path).context(err::GetKernelStore)?;
 
     Ok(store)
 }
 
-pub fn parse_system_stores() -> Result<StorePathMap, StoreError> {
+pub fn parse_system_stores() -> Result<StorePathMap> {
     let mut cmd = Command::new("nix-store");
     cmd.arg("-q");
     cmd.arg("--references");
     cmd.arg("/nix/var/nix/profiles/system/sw/");
 
     let output = {
-        let output = cmd.output()?;
+        let output = cmd.output().context(err::CommandIO { cmd })?;
         String::from_utf8(output.stdout)?
     };
 
@@ -281,7 +278,7 @@ pub fn parse_system_stores() -> Result<StorePathMap, StoreError> {
     Ok(stores)
 }
 
-pub fn parse_system_packages() -> Result<SystemPackageMap, StoreError> {
+pub fn parse_system_packages() -> Result<SystemPackageMap> {
     let stores = parse_system_stores()?;
     let mut packages = HashMap::with_capacity(stores.len());
 

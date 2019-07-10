@@ -1,16 +1,12 @@
 use super::PackageState;
-use crate::error::Error;
 use crate::store::diff::{self, PackageDiff, StoreDiff};
 use colored::Colorize;
 use std::cmp::Ordering;
 
-pub fn package_diffs(
-    mut cur_state: PackageState,
-    mut old_state: PackageState,
-) -> Result<(), Error> {
+pub fn package_diffs(mut cur_state: PackageState, mut old_state: PackageState) {
     let gdep_diffs = {
-        let new = diff::remove_global_deps(&mut cur_state.packages)?;
-        let old = diff::remove_global_deps(&mut old_state.packages)?;
+        let new = diff::remove_global_deps(&mut cur_state.packages);
+        let old = diff::remove_global_deps(&mut old_state.packages);
 
         let mut diffs = diff::get_store_diffs(&new, &old);
         diffs.sort_unstable_by(|x, y| x.name.cmp(&y.name));
@@ -44,8 +40,6 @@ pub fn package_diffs(
     for dep_diff in gdep_diffs {
         println!("{}: {}", dep_diff.name.blue(), format_ver_change(&dep_diff));
     }
-
-    Ok(())
 }
 
 fn display_store_diff(diff: &StoreDiff) {

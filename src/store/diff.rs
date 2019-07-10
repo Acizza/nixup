@@ -1,5 +1,4 @@
 use super::{StorePath, StorePathMap, SystemPackageMap};
-use crate::error::StoreError;
 use hashbrown::hash_map::Entry;
 use hashbrown::{HashMap, HashSet};
 use rayon::prelude::*;
@@ -101,7 +100,7 @@ impl<'a> DependencyScan<'a> {
     }
 }
 
-pub fn remove_global_deps(pkgs: &mut SystemPackageMap) -> Result<StorePathMap, StoreError> {
+pub fn remove_global_deps(pkgs: &mut SystemPackageMap) -> StorePathMap {
     let mut ver_tracker = HashMap::<&str, DependencyScan>::new();
 
     for pkg in pkgs.values_mut() {
@@ -132,8 +131,7 @@ pub fn remove_global_deps(pkgs: &mut SystemPackageMap) -> Result<StorePathMap, S
         })
         .collect::<SmallVec<[String; 8]>>();
 
-    let global_deps = pkgs
-        .par_iter_mut()
+    pkgs.par_iter_mut()
         .fold(HashSet::new, |mut acc, (_, pkg)| {
             for name in &dep_names {
                 if let Some(dep) = pkg.deps.take(name) {
@@ -146,9 +144,7 @@ pub fn remove_global_deps(pkgs: &mut SystemPackageMap) -> Result<StorePathMap, S
         .reduce(HashSet::new, |mut acc, x| {
             acc.extend(x);
             acc
-        });
-
-    Ok(global_deps)
+        })
 }
 
 #[cfg(test)]
@@ -242,8 +238,7 @@ mod test {
         let expected_global_dep = mkstore("glibc", "2.27");
         let expected_pkg_dep = [mkstore("db", "4.8.30"), mkstore("db", "5.0.0")];
 
-        let global_deps =
-            remove_global_deps(&mut pkgs).expect("failed to isolate global dependencies");
+        let global_deps = remove_global_deps(&mut pkgs);
 
         assert!(global_deps.len() == 1, "global dependency length mismatch");
 

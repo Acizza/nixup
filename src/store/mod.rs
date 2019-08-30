@@ -1,12 +1,12 @@
 pub mod diff;
 
 use crate::err::{self, Result};
-use hashbrown::{HashMap, HashSet};
 use rayon::prelude::*;
 use serde_derive::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use snafu::{OptionExt, ResultExt};
 use std::borrow::Borrow;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::process::Command;

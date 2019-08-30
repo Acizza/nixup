@@ -1,8 +1,8 @@
 use super::{StorePath, StorePathMap, SystemPackageMap};
-use hashbrown::hash_map::Entry;
-use hashbrown::{HashMap, HashSet};
 use rayon::prelude::*;
 use smallvec::SmallVec;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
 pub struct StoreDiff {

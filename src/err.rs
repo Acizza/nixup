@@ -1,4 +1,4 @@
-use snafu::{Backtrace, ErrorCompat, Snafu};
+use snafu::{Backtrace, ErrorCompat, GenerateBacktrace, Snafu};
 use std::io;
 use std::path;
 use std::process;
@@ -50,7 +50,7 @@ impl From<string::FromUtf8Error> for Error {
     fn from(err: string::FromUtf8Error) -> Self {
         Error::UTF8Decode {
             source: err,
-            backtrace: Backtrace::new(),
+            backtrace: Backtrace::generate(),
         }
     }
 }
@@ -59,7 +59,7 @@ impl From<rmp_serde::encode::Error> for Error {
     fn from(err: rmp_serde::encode::Error) -> Self {
         Error::RMPEncode {
             source: err,
-            backtrace: Backtrace::new(),
+            backtrace: Backtrace::generate(),
         }
     }
 }
@@ -68,7 +68,7 @@ impl From<rmp_serde::decode::Error> for Error {
     fn from(err: rmp_serde::decode::Error) -> Self {
         Error::RMPDecode {
             source: err,
-            backtrace: Backtrace::new(),
+            backtrace: Backtrace::generate(),
         }
     }
 }

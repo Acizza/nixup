@@ -1,8 +1,4 @@
 use super::{StorePath, StorePathMap, SystemPackageMap};
-use rayon::prelude::*;
-use smallvec::SmallVec;
-use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
 pub struct StoreDiff {
@@ -88,67 +84,6 @@ pub fn get_package_diffs(new: &SystemPackageMap, old: &SystemPackageMap) -> Vec<
     diffs
 }
 
-struct DependencyScan<'a> {
-    last_version: &'a str,
-    has_multiple_versions: bool,
-}
-
-impl<'a> DependencyScan<'a> {
-    fn new(last_version: &'a str, has_multiple_versions: bool) -> DependencyScan {
-        DependencyScan {
-            last_version,
-            has_multiple_versions,
-        }
-    }
-}
-
-pub fn remove_global_deps(pkgs: &mut SystemPackageMap) -> StorePathMap {
-    let mut ver_tracker = HashMap::<&str, DependencyScan>::new();
-
-    for pkg in pkgs.values_mut() {
-        for dep in &pkg.deps {
-            match ver_tracker.entry(&dep.name) {
-                Entry::Occupied(mut entry) => {
-                    let entry = entry.get_mut();
-
-                    if dep.version != entry.last_version {
-                        entry.has_multiple_versions = true;
-                    }
-                }
-                Entry::Vacant(entry) => {
-                    entry.insert(DependencyScan::new(&dep.version, false));
-                }
-            }
-        }
-    }
-
-    let dep_names = ver_tracker
-        .into_iter()
-        .filter_map(|(n, d)| {
-            if d.has_multiple_versions {
-                None
-            } else {
-                Some(n.to_string())
-            }
-        })
-        .collect::<SmallVec<[String; 8]>>();
-
-    pkgs.par_iter_mut()
-        .fold(HashSet::new, |mut acc, (_, pkg)| {
-            for name in &dep_names {
-                if let Some(dep) = pkg.deps.take(name) {
-                    acc.insert(dep);
-                }
-            }
-
-            acc
-        })
-        .reduce(HashSet::new, |mut acc, x| {
-            acc.extend(x);
-            acc
-        })
-}
-
 #[cfg(test)]
 mod test {
     use super::super::test::{mkstore, mksyspkg};
@@ -213,7 +148,7 @@ mod test {
 
     #[test]
     fn separate_global_deps() {
-        let mut pkgs = vec![
+        let pkgs = vec![
             mksyspkg(
                 mkstore("test1", "1"),
                 vec![mkstore("db", "4.8.30"), mkstore("glibc", "2.27")]
@@ -237,22 +172,7 @@ mod test {
         .map(|x| (x.path.name.clone(), x))
         .collect::<SystemPackageMap>();
 
-        let expected_global_dep = mkstore("glibc", "2.27");
         let expected_pkg_dep = [mkstore("db", "4.8.30"), mkstore("db", "5.0.0")];
-
-        let global_deps = remove_global_deps(&mut pkgs);
-
-        assert!(global_deps.len() == 1, "global dependency length mismatch");
-
-        let global_dep = global_deps
-            .get(&expected_global_dep.name)
-            .expect("failed to get expected global dependency");
-
-        assert_eq!(global_dep.name, expected_global_dep.name, "name mismatch");
-        assert_eq!(
-            global_dep.version, expected_global_dep.version,
-            "version mismatch"
-        );
 
         for pkg in pkgs.values() {
             let found = pkg.deps.iter().find(|pkg_dep| {

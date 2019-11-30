@@ -3,16 +3,7 @@ use crate::store::diff::{self, PackageDiff, StoreDiff};
 use colored::Colorize;
 use std::cmp::Ordering;
 
-pub fn package_diffs(mut cur_state: PackageState, mut old_state: PackageState) {
-    let gdep_diffs = {
-        let new = diff::remove_global_deps(&mut cur_state.packages);
-        let old = diff::remove_global_deps(&mut old_state.packages);
-
-        let mut diffs = StoreDiff::from_store_list(&new, &old);
-        diffs.sort_unstable_by(|x, y| x.name.cmp(&y.name));
-        diffs
-    };
-
+pub fn package_diffs(cur_state: PackageState, old_state: PackageState) {
     let pkg_diffs = {
         let mut diffs = diff::get_package_diffs(&cur_state.packages, &old_state.packages);
         diffs.sort_unstable_by(sys_pkg_sorter);
@@ -30,15 +21,6 @@ pub fn package_diffs(mut cur_state: PackageState, mut old_state: PackageState) {
 
     for diff in pkg_diffs {
         display_pkg_diff(diff);
-    }
-
-    println!(
-        "\n{} global dependency update(s)\n",
-        gdep_diffs.len().to_string().blue()
-    );
-
-    for dep_diff in gdep_diffs {
-        println!("{}: {}", dep_diff.name.blue(), format_ver_change(&dep_diff));
     }
 }
 

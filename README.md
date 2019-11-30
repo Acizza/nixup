@@ -15,14 +15,9 @@ fish: 2.7.1 -> 3.0.0
 ^ db: 4.8.30 -> 5.3.28
 ^ pcre2: 10.31 -> 10.32
 wine-wow|staging: 4.0-rc5 -> 4.2
-
-2 global dependency update(s)
-
-curl: 7.63.0 -> 7.64.0
-glibc: 2.27 -> 2.28
 ```
 
-Note that the `db` and `pcre2` updates only apply to the `fish` package. If all system packages used the same version of those dependencies, then they would have showed up in the global dependency section instead.
+The `^` arrow in front of the `db` and `pcre2` packages indicate that they were only updated for the `fish` package, and not globally.
 
 # Usage
 

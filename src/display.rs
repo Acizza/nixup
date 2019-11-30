@@ -8,7 +8,7 @@ pub fn package_diffs(mut cur_state: PackageState, mut old_state: PackageState) {
         let new = diff::remove_global_deps(&mut cur_state.packages);
         let old = diff::remove_global_deps(&mut old_state.packages);
 
-        let mut diffs = diff::get_store_diffs(&new, &old);
+        let mut diffs = StoreDiff::from_store_list(&new, &old);
         diffs.sort_unstable_by(|x, y| x.name.cmp(&y.name));
         diffs
     };
@@ -19,7 +19,7 @@ pub fn package_diffs(mut cur_state: PackageState, mut old_state: PackageState) {
         diffs
     };
 
-    let kernel_diff = diff::get_store_diff(&cur_state.kernel, &old_state.kernel);
+    let kernel_diff = StoreDiff::from_store(&cur_state.kernel, &old_state.kernel);
 
     let num_updates = pkg_diffs.len() + (kernel_diff.is_some() as usize);
     println!("{} package update(s)\n", num_updates.to_string().blue());

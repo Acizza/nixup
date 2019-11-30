@@ -11,44 +11,46 @@ pub struct StoreDiff {
     pub ver_to: String,
 }
 
+impl StoreDiff {
+    pub fn from_store(new: &StorePath, old: &StorePath) -> Option<StoreDiff> {
+        if new.version == old.version {
+            return None;
+        }
+
+        let diff = StoreDiff {
+            name: new.name.clone(),
+            ver_from: old.version.clone(),
+            ver_to: new.version.clone(),
+        };
+
+        Some(diff)
+    }
+
+    pub fn from_store_list(new_stores: &StorePathMap, old_stores: &StorePathMap) -> Vec<StoreDiff> {
+        let mut diffs = Vec::new();
+
+        for new in new_stores {
+            let old = match old_stores.get(&new.name) {
+                Some(old) => old,
+                None => continue,
+            };
+
+            let diff = match StoreDiff::from_store(new, old) {
+                Some(diff) => diff,
+                None => continue,
+            };
+
+            diffs.push(diff);
+        }
+
+        diffs
+    }
+}
+
 impl PartialEq for StoreDiff {
     fn eq(&self, other: &StoreDiff) -> bool {
         self.name == other.name
     }
-}
-
-pub fn get_store_diff(new: &StorePath, old: &StorePath) -> Option<StoreDiff> {
-    if new.version == old.version {
-        return None;
-    }
-
-    let diff = StoreDiff {
-        name: new.name.clone(),
-        ver_from: old.version.clone(),
-        ver_to: new.version.clone(),
-    };
-
-    Some(diff)
-}
-
-pub fn get_store_diffs(new_stores: &StorePathMap, old_stores: &StorePathMap) -> Vec<StoreDiff> {
-    let mut diffs = Vec::new();
-
-    for new in new_stores {
-        let old = match old_stores.get(&new.name) {
-            Some(old) => old,
-            None => continue,
-        };
-
-        let diff = match get_store_diff(new, old) {
-            Some(diff) => diff,
-            None => continue,
-        };
-
-        diffs.push(diff);
-    }
-
-    diffs
 }
 
 #[derive(Debug)]
@@ -67,8 +69,8 @@ pub fn get_package_diffs(new: &SystemPackageMap, old: &SystemPackageMap) -> Vec<
             None => continue,
         };
 
-        let pkg_diff = get_store_diff(&new_pkg.path, &old_pkg.path);
-        let dep_diffs = get_store_diffs(&new_pkg.deps, &old_pkg.deps);
+        let pkg_diff = StoreDiff::from_store(&new_pkg.path, &old_pkg.path);
+        let dep_diffs = StoreDiff::from_store_list(&new_pkg.deps, &old_pkg.deps);
 
         if pkg_diff.is_none() && dep_diffs.is_empty() {
             continue;
@@ -191,7 +193,7 @@ mod test {
             mkstorediff("steam-runtime", "2016-08-26", "2019-02-15"),
         ];
 
-        let diffs = get_store_diffs(&new_stores, &old_stores);
+        let diffs = StoreDiff::from_store_list(&new_stores, &old_stores);
 
         assert!(
             diffs.len() == expected_diffs.len(),

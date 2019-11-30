@@ -5,7 +5,7 @@ authors = [ "Acizza <jgit@tuta.io>" ]
 edition = "2018"
 
 [dependencies]
-colored = "~1.8.0"
+colored = "~1.9.0"
 dirs = "~2.0.0"
 rayon = "~1.2.0"
 rmp-serde = "~0.14.0"

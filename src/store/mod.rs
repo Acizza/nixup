@@ -1,54 +1,36 @@
 pub mod diff;
 
-use crate::err::{self, Result};
-use rayon::prelude::*;
+use crate::err::Result;
+use rusqlite::params;
 use serde_derive::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use snafu::{OptionExt, ResultExt};
-use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
-use std::process::Command;
 
-pub type Name = String;
-
-#[derive(Serialize, Deserialize, Clone, Debug, Eq)]
-pub struct StorePath {
-    #[serde(skip)]
-    pub path: Option<PathBuf>,
-    pub name: Name,
+#[derive(Debug, Eq, Serialize, Deserialize)]
+pub struct Store {
+    /// The store's unique id.
+    /// Note that this cannot be used to identify a store persisently.
+    pub id: u32,
+    /// The store's name.
+    pub name: String,
+    /// The store's version.
     pub version: String,
+    /// The suffix of the store's name.
+    /// This can either be the derivation's output type, or a special variant of the store.
+    pub suffix: Option<String>,
+    /// The epoch time the store was registered on the system.
+    pub register_time: u32,
 }
 
-impl Hash for StorePath {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
-    }
-}
-
-impl PartialEq for StorePath {
-    fn eq(&self, other: &StorePath) -> bool {
-        self.name == other.name
-    }
-}
-
-impl Borrow<Name> for StorePath {
-    fn borrow(&self) -> &Name {
-        &self.name
-    }
-}
-
-pub type StorePathMap = HashSet<StorePath>;
-
-impl StorePath {
-    pub fn parse<P>(path: P) -> Option<StorePath>
+impl Store {
+    pub fn parse<P>(id: u32, register_time: u32, path: P) -> Option<Self>
     where
-        P: AsRef<str>,
+        P: Into<String>,
     {
-        let path = path.as_ref();
+        let path = path.into();
 
-        let stripped = StorePath::strip(path)?;
+        let stripped = Self::strip(path)?;
         let mut split_sep = stripped.split('-').collect::<SmallVec<[&str; 4]>>();
 
         match split_sep.len() {
@@ -61,13 +43,13 @@ impl StorePath {
                 let version = split_sep.swap_remove(1).into();
                 let name = split_sep.swap_remove(0).into();
 
-                let store = StorePath {
-                    path: Some(path.into()),
+                return Some(Self {
+                    id,
+                    register_time,
                     name,
                     version,
-                };
-
-                return Some(store);
+                    suffix: None,
+                });
             }
             _ => (),
         }
@@ -76,17 +58,14 @@ impl StorePath {
             let end = split_sep.len() - 1;
 
             if split_sep[end].chars().all(char::is_alphabetic) {
-                Some(split_sep.swap_remove(end))
+                Some(split_sep.swap_remove(end).to_string())
             } else {
                 None
             }
         };
 
         let version = {
-            let pos = split_sep
-                .iter()
-                .position(|&s| StorePath::is_version_str(s))?;
-
+            let pos = split_sep.iter().position(|&s| Self::is_version_str(s))?;
             let ver_str = split_sep[pos..].join("-");
 
             unsafe {
@@ -96,21 +75,15 @@ impl StorePath {
             ver_str
         };
 
-        let mut name = split_sep.join("-");
+        let name = split_sep.join("-");
 
-        if let Some(sfx) = suffix {
-            name.reserve(1 + sfx.len());
-            name.push('|');
-            name.push_str(sfx);
-        }
-
-        let store = StorePath {
-            path: Some(path.into()),
+        Some(Self {
+            id,
+            register_time,
             name,
             version,
-        };
-
-        Some(store)
+            suffix,
+        })
     }
 
     fn is_version_str(string: &str) -> bool {
@@ -148,238 +121,214 @@ impl StorePath {
 
     pub fn strip<P>(path: P) -> Option<String>
     where
-        P: Into<String>,
+        P: AsRef<str> + Into<String>,
     {
-        let mut path = path.into();
+        let path_ref = path.as_ref();
 
-        match path.find('-') {
-            Some(idx) if path.len() <= idx + 1 => return None,
-            Some(idx) => path.replace_range(..=idx, ""),
-            None => return None,
-        }
-
-        Some(path)
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SystemPackage {
-    pub path: StorePath,
-    pub deps: StorePathMap,
-}
-
-pub type SystemPackageMap = HashMap<Name, SystemPackage>;
-
-impl SystemPackage {
-    pub fn from_path<P>(path: P) -> SystemPackage
-    where
-        P: Into<StorePath>,
-    {
-        SystemPackage {
-            path: path.into(),
-            deps: HashSet::new(),
+        match path_ref.find('-') {
+            Some(idx) if path_ref.len() <= idx + 1 => None,
+            Some(idx) => {
+                let mut path = path.into();
+                path.replace_range(..=idx, "");
+                Some(path)
+            }
+            None => None,
         }
     }
 
-    pub fn with_deps<P>(path: P) -> Result<SystemPackage>
-    where
-        P: Into<StorePath>,
-    {
-        let mut package = SystemPackage::from_path(path);
-        package.parse_deps()?;
+    pub fn all_from_system(db: &SystemDatabase) -> Result<HashSet<Self>> {
+        let mut stmt = db
+            .conn()
+            .prepare(include_str!("../../sql/select_system_stores.sql"))?;
 
-        Ok(package)
+        Self::unique_from_query(rusqlite::NO_PARAMS, &mut stmt)
     }
 
-    pub fn parse_deps(&mut self) -> Result<()> {
-        let path = match &self.path.path {
-            Some(path) => path,
-            None => return Ok(()),
-        };
+    /// Runs the specified SQL statement (`stmt`) and attemps to parse each returned row into a unique `Store`.
+    /// Note that the query must select the store's ID, path, and registration time, in that order.
+    ///
+    /// See the documentation of the `get_unique` function for more information on what is considered a unique `Store`.
+    fn unique_from_query<P>(params: P, stmt: &mut rusqlite::Statement) -> Result<HashSet<Self>>
+    where
+        P: IntoIterator,
+        P::Item: rusqlite::ToSql,
+    {
+        let store_queries = stmt
+            .query_map(params, |row| {
+                let id = row.get(0)?;
+                let path: String = row.get(1)?;
+                let register_time: u32 = row.get(2)?;
+                let store = Store::parse(id, register_time, path);
+                Ok(store)
+            })?
+            .filter_map(|row| row.ok().and_then(|store| store));
 
-        let mut cmd = Command::new("nix-store");
-        cmd.arg("-qR");
-        cmd.arg(path);
+        let stores = Self::get_unique(store_queries);
+        Ok(stores)
+    }
 
-        let output = {
-            let output = cmd.output().context(err::CommandIO { cmd })?;
-            let mut content = String::from_utf8(output.stdout)?;
+    /// Returns a new `HashSet` containing `Store`'s that are not considered to have duplicates.
+    ///
+    /// A `Store` that has different versions that were registered on the system within an hour
+    /// of each other is considered to be a duplicate.
+    ///
+    /// Only filtering stores that were registered on the system within an hour of each other reduces
+    /// false positives, as it likely means that the differing versions are from the same system update,
+    /// rather than a separate one. We only want to filter out stores with differing versions from the same
+    /// system update since there isn't a way to persistently identify a store across updates outside of its name.
+    fn get_unique(stores: impl Iterator<Item = Self>) -> HashSet<Self> {
+        let mut unique = HashSet::<Store>::new();
+        let mut duplicates = HashSet::new();
 
-            // The last line contains the current package, so strip it from the output
-            if let Some(idx) = content.rfind("/nix/") {
-                content.replace_range(idx.., "");
+        for store in stores {
+            if duplicates.contains(&store.name) {
+                continue;
             }
 
-            content
-        };
+            if let Some(existing) = unique.get(&store) {
+                let newer_reg_time = existing.register_time.max(store.register_time);
+                let older_reg_time = existing.register_time.min(store.register_time);
 
-        self.deps = parse_unique_stores(output.lines());
-        Ok(())
+                if newer_reg_time - older_reg_time < 3600 && existing.version != store.version {
+                    unique.remove(&store);
+                    duplicates.insert(store.name);
+                }
+
+                continue;
+            }
+
+            unique.insert(store);
+        }
+
+        unique
     }
 }
 
-fn parse_unique_stores<'a, I>(paths: I) -> StorePathMap
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    let mut stores = HashSet::<StorePath>::new();
-    let mut duplicates = HashSet::<String>::new();
+impl Hash for Store {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
+}
 
-    for path in paths {
-        let store = match StorePath::parse(path) {
-            Some(store) => store,
-            None => continue,
-        };
+impl PartialEq for Store {
+    fn eq(&self, other: &Store) -> bool {
+        self.name == other.name
+    }
+}
 
-        if duplicates.contains(&store.name) {
-            continue;
+#[derive(Debug, Eq, Serialize, Deserialize)]
+pub struct Derivation {
+    pub store: Store,
+    pub deps: HashSet<Store>,
+}
+
+impl Derivation {
+    pub fn all_from_stores(stores: HashSet<Store>, db: &SystemDatabase) -> Result<HashSet<Self>> {
+        let mut stmt = db
+            .conn()
+            .prepare(include_str!("../../sql/select_store_deps.sql"))?;
+
+        let mut packages = HashSet::with_capacity(stores.len());
+
+        for store in stores {
+            let deps = Store::unique_from_query(params![store.id], &mut stmt)?;
+            packages.insert(Self { store, deps });
         }
 
-        if stores.contains(&store.name) {
-            stores.remove(&store);
-            duplicates.insert(store.name);
-            continue;
-        }
-
-        stores.insert(store);
+        Ok(packages)
     }
 
-    stores
+    pub fn all_from_system(db: &SystemDatabase) -> Result<HashSet<Self>> {
+        let stores = Store::all_from_system(db)?;
+        Derivation::all_from_stores(stores, db)
+    }
 }
 
-pub fn parse_kernel_store() -> Result<StorePath> {
-    let mut cmd = Command::new("nix-store");
-    cmd.arg("-qR");
-    cmd.arg("/nix/var/nix/profiles/system/kernel");
-
-    let output = {
-        let output = cmd.output().context(err::CommandIO { cmd })?;
-        String::from_utf8(output.stdout)?
-    };
-
-    let path = output.lines().next().context(err::GetKernelStore)?;
-    let store = StorePath::parse(path).context(err::GetKernelStore)?;
-
-    Ok(store)
+impl Hash for Derivation {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.store.name.hash(state);
+    }
 }
 
-pub fn parse_system_stores() -> Result<StorePathMap> {
-    let mut cmd = Command::new("nix-store");
-    cmd.arg("-q");
-    cmd.arg("--references");
-    cmd.arg("/nix/var/nix/profiles/system/sw/");
-
-    let output = {
-        let output = cmd.output().context(err::CommandIO { cmd })?;
-        String::from_utf8(output.stdout)?
-    };
-
-    let stores = parse_unique_stores(output.lines());
-    Ok(stores)
+impl PartialEq for Derivation {
+    fn eq(&self, other: &Derivation) -> bool {
+        self.store.name == other.store.name
+    }
 }
 
-pub fn parse_system_packages() -> Result<SystemPackageMap> {
-    let stores = parse_system_stores()?;
-    let mut packages = HashMap::with_capacity(stores.len());
+pub struct SystemDatabase(rusqlite::Connection);
 
-    packages.par_extend(stores.into_par_iter().filter_map(|store| {
-        let name = store.name.clone();
-        let pkg = SystemPackage::with_deps(store).ok()?;
+impl SystemDatabase {
+    pub const PATH: &'static str = "/nix/var/nix/db/db.sqlite";
 
-        Some((name, pkg))
-    }));
+    pub fn open() -> Result<Self> {
+        use rusqlite::{Connection, OpenFlags};
+        let conn = Connection::open_with_flags(Self::PATH, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        Ok(Self(conn))
+    }
 
-    Ok(packages)
+    #[inline(always)]
+    fn conn(&self) -> &rusqlite::Connection {
+        &self.0
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
 
-    pub fn mkstore<S>(name: S, ver: S) -> StorePath
-    where
-        S: Into<String>,
-    {
-        StorePath {
-            path: None,
-            name: name.into(),
-            version: ver.into(),
-        }
-    }
+    macro_rules! store_tuple {
+        ($path:expr => $name:expr, $version:expr, $suffix:expr) => {
+            (
+                $path,
+                Some(Store {
+                    id: 0,
+                    register_time: 0,
+                    name: $name.into(),
+                    version: $version.into(),
+                    suffix: $suffix,
+                }),
+            )
+        };
 
-    pub fn mksyspkg<P, V>(path: P, deps: V) -> SystemPackage
-    where
-        P: Into<StorePath>,
-        V: Into<StorePathMap>,
-    {
-        SystemPackage {
-            path: path.into(),
-            deps: deps.into(),
-        }
+        ($path:expr) => {
+            ($path, None)
+        };
     }
 
     #[test]
     fn parse_store_info() {
-        let paths = [
-            (
-                "/nix/store/123abc-glxinfo-8.4.0",
-                Some(mkstore("glxinfo", "8.4.0")),
-            ),
-            ("/nix/store/123abc-fix-static.patch", None),
-            (
-                "/nix/store/123abc-nix-wallpaper-simple-dark-gray_bottom.png.drv",
-                None,
-            ),
-            ("/nix/store/123abc-pcre-8.42", Some(mkstore("pcre", "8.42"))),
-            (
-                "/nix/store/123abc-dxvk-v0.96",
-                Some(mkstore("dxvk", "v0.96")),
-            ),
-            (
-                "/nix/store/123abc-dxvk-6062dfbef4d5c0f061b9f6e342acab54f34e089a",
-                Some(mkstore("dxvk", "6062dfbef4d5c0f061b9f6e342acab54f34e089a")),
-            ),
-            (
-                "/nix/store/123abc-dxvk-fe781df591465b196ae273bf9f110797274d84bd",
-                Some(mkstore("dxvk", "fe781df591465b196ae273bf9f110797274d84bd")),
-            ),
-            (
-                "/nix/store/123abc-rpcs3-7788-4c59395",
-                Some(mkstore("rpcs3", "7788-4c59395")),
-            ),
-            ("/nix/store/123abc-gcc-7.4.0", Some(mkstore("gcc", "7.4.0"))),
-            (
-                "/nix/store/123abc-steam-runtime-2016-08-26",
-                Some(mkstore("steam-runtime", "2016-08-26")),
-            ),
-            (
-                "/nix/store/123abc-wine-wow-4.0-rc5-staging",
-                Some(mkstore("wine-wow|staging", "4.0-rc5")),
-            ),
-            (
-                "/nix/store/123abc-ffmpeg-3.4.5-bin",
-                Some(mkstore("ffmpeg|bin", "3.4.5")),
-            ),
-            (
-                "/nix/store/123abc-vulkan-loader-1.1.85",
-                Some(mkstore("vulkan-loader", "1.1.85")),
-            ),
-            (
-                "/nix/store/123abc-vpnc-0.5.3-post-r550",
-                Some(mkstore("vpnc", "0.5.3-post-r550")),
-            ),
+        let stores = [
+            store_tuple!("/nix/store/123abc-fix-static.patch"),
+            store_tuple!("/nix/store/123abc-some-deriv.drv"),
+            store_tuple!("/nix/store/123abc-glxinfo-8.4.0" => "glxinfo", "8.4.0", None),
+            store_tuple!("/nix/store/123abc-pcre-8.42" => "pcre", "8.42", None),
+            store_tuple!("/nix/store/123abc-dxvk-v1.4.6" => "dxvk", "v1.4.6", None),
+            store_tuple!("/nix/store/123abc-dxvk-c47095a8dcfa4c376d8e9c4276865b7f298137d8" => "dxvk", "c47095a8dcfa4c376d8e9c4276865b7f298137d8", None),
+            store_tuple!("/nix/store/123abc-rpcs3-9165-8ca53f9" => "rpcs3", "9165-8ca53f9", None),
+            store_tuple!("/nix/store/123abc-single-version-8" => "single-version", "8", None),
+            store_tuple!("/nix/store/123abc-single-4" => "single", "4", None),
+            store_tuple!("/nix/store/123abc-wine-wow-4.21-staging" => "wine-wow", "4.21", Some("staging".into())),
+            store_tuple!("/nix/store/123abc-wine-wow-4.0-rc5-staging" => "wine-wow", "4.0-rc5", Some("staging".into())),
+            store_tuple!("/nix/store/123abc-ffmpeg-3.4.5-bin" => "ffmpeg", "3.4.5", Some("bin".into())),
+            store_tuple!("/nix/store/123abc-vulkan-loader-1.1.85" => "vulkan-loader", "1.1.85", None),
+            store_tuple!("/nix/store/123abc-vpnc-0.5.3-post-r550" => "vpnc", "0.5.3-post-r550", None),
         ];
 
-        for (full, path) in &paths {
-            match StorePath::parse(full) {
-                Some(result) => match path {
-                    Some(p) => {
-                        assert_eq!(result.name, p.name, "name mismatch");
-                        assert_eq!(result.version, p.version, "version mismatch");
+        for (path, expected_store) in &stores {
+            match Store::parse(0, 0, *path) {
+                Some(parsed) => match expected_store {
+                    Some(expected) => {
+                        assert_eq!(expected.name, parsed.name, "name mismatch");
+                        assert_eq!(expected.version, parsed.version, "version mismatch");
+                        assert_eq!(expected.suffix, parsed.suffix, "suffix mismatch");
                     }
-                    None => assert!(false, "{} was parsed when no result was expected", full),
+                    None => panic!(
+                        "{} was parsed when no result was expected: {:?}",
+                        path, parsed
+                    ),
                 },
-                None if path.is_some() => assert!(false, "{} failed to be parsed", full),
+                None if expected_store.is_some() => panic!("{} failed to be parsed", path),
                 None => (),
             }
         }
@@ -388,6 +337,6 @@ mod test {
     #[test]
     fn strip_store_path() {
         let store = "/nix/store/03lp4drizbh8cl3f9mjysrrzrg3ssakv-glxinfo-8.4.0";
-        assert_eq!(StorePath::strip(store), Some("glxinfo-8.4.0".into()));
+        assert_eq!(Store::strip(store), Some("glxinfo-8.4.0".into()));
     }
 }

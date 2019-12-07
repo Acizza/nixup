@@ -3,10 +3,11 @@ mod err;
 mod store;
 
 use crate::err::Result;
-use crate::store::{StorePath, SystemPackageMap};
+use crate::store::{Derivation, SystemDatabase};
 use clap::clap_app;
 use serde_derive::{Deserialize, Serialize};
-use snafu::ResultExt;
+use snafu::{ensure, ResultExt};
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::PathBuf;
 
@@ -29,60 +30,63 @@ fn main() {
 }
 
 fn run(args: &clap::ArgMatches) -> Result<()> {
+    ensure!(is_root_user(), err::RunAsRoot);
+
+    let system_db = SystemDatabase::open()?;
+
     if args.is_present("save_state") {
-        let state = PackageState::get_current()?;
-        state.save()?;
+        let pkgs = Derivation::all_from_system(&system_db)?;
+        let state = PackageState::new(pkgs);
+        state.save()
     } else {
         let old_state = PackageState::load()?;
-        let cur_state = PackageState::get_current()?;
+        let cur_state = Derivation::all_from_system(&system_db)?;
 
-        display::package_diffs(cur_state, old_state);
+        display::package_diffs(cur_state, old_state.take());
+        Ok(())
     }
-
-    Ok(())
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PackageState {
-    pub kernel: StorePath,
-    pub packages: SystemPackageMap,
+fn is_root_user() -> bool {
+    unsafe { libc::getuid() == 0 }
 }
+
+#[derive(Serialize, Deserialize)]
+struct PackageState(HashSet<Derivation>);
 
 impl PackageState {
-    fn get_current() -> Result<PackageState> {
-        let kernel = store::parse_kernel_store()?;
-        let packages = store::parse_system_packages()?;
-
-        Ok(PackageState { kernel, packages })
+    fn new(packages: HashSet<Derivation>) -> Self {
+        PackageState(packages)
     }
 
     fn save(&self) -> Result<()> {
-        let path = PackageState::get_save_path()?;
+        let path = Self::save_path()?;
         let mut file = File::create(&path).context(err::FileIO { path })?;
-
         rmp_serde::encode::write(&mut file, self)?;
-
         Ok(())
     }
 
-    fn load() -> Result<PackageState> {
-        let path = PackageState::get_save_path()?;
+    fn load() -> Result<Self> {
+        let path = Self::save_path()?;
         let file = File::open(&path).context(err::FileIO { path })?;
-
         let state = rmp_serde::decode::from_read(file)?;
-
         Ok(state)
     }
 
-    fn get_save_path() -> Result<PathBuf> {
-        let path = get_cache_dir()?.join("package_state.mpack");
+    fn save_path() -> Result<PathBuf> {
+        let path = get_data_dir()?.join("packages.mpack");
         Ok(path)
+    }
+
+    #[inline(always)]
+    fn take(self) -> HashSet<Derivation> {
+        self.0
     }
 }
 
-fn get_cache_dir() -> Result<PathBuf> {
-    let dir = dirs::cache_dir()
-        .unwrap_or_else(|| PathBuf::from("~/.cache/"))
+fn get_data_dir() -> Result<PathBuf> {
+    let dir = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("~/.local/share/"))
         .join(env!("CARGO_PKG_NAME"));
 
     if !dir.exists() {

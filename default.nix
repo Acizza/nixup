@@ -1,5 +1,5 @@
 with import <nixpkgs> {};
 
 pkgs.mkShell {
-    buildInputs = [ stdenv.cc ];
+    buildInputs = [ stdenv.cc sqlite.dev ];
 }

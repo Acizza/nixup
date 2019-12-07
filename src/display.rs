@@ -1,36 +1,41 @@
-use super::PackageState;
 use crate::store::diff::{self, PackageDiff, StoreDiff};
+use crate::store::Derivation;
 use colored::Colorize;
+use std::borrow::Cow;
 use std::cmp::Ordering;
+use std::collections::HashSet;
 
-pub fn package_diffs(cur_state: PackageState, old_state: PackageState) {
+pub fn package_diffs(cur_state: HashSet<Derivation>, old_state: HashSet<Derivation>) {
     let pkg_diffs = {
-        let mut diffs = diff::get_package_diffs(&cur_state.packages, &old_state.packages);
+        let mut diffs = diff::get_package_diffs(&cur_state, &old_state);
         diffs.sort_unstable_by(sys_pkg_sorter);
         diffs
     };
 
-    let kernel_diff = StoreDiff::from_store(&cur_state.kernel, &old_state.kernel);
-
-    let num_updates = pkg_diffs.len() + (kernel_diff.is_some() as usize);
-    println!("{} package update(s)\n", num_updates.to_string().blue());
-
-    if let Some(kernel_diff) = kernel_diff {
-        display_store_diff(&kernel_diff);
-    }
+    println!("{} package update(s)\n", pkg_diffs.len().to_string().blue());
 
     for diff in pkg_diffs {
         display_pkg_diff(diff);
     }
 }
 
-fn display_store_diff(diff: &StoreDiff) {
-    println!("{}: {}", diff.name.blue(), format_ver_change(diff));
+fn format_store_diff(diff: &StoreDiff) -> String {
+    let suffix = match &diff.suffix {
+        Some(suffix) => Cow::Owned(format!(" {{{}}}", suffix).blue().bold().to_string()),
+        None => Cow::Borrowed(""),
+    };
+
+    format!(
+        "{}{}: {}",
+        diff.name.blue(),
+        suffix,
+        format_ver_change(diff)
+    )
 }
 
 fn display_pkg_diff(mut diff: PackageDiff) {
     match diff.pkg {
-        Some(pkg) => display_store_diff(&pkg),
+        Some(pkg) => println!("{}", format_store_diff(&pkg)),
         None => println!("{}", diff.name.blue()),
     }
 
@@ -41,21 +46,16 @@ fn display_pkg_diff(mut diff: PackageDiff) {
     diff.deps.sort_unstable_by(|x, y| x.name.cmp(&y.name));
 
     for dep in diff.deps {
-        println!(
-            "{} {}: {}",
-            "^".yellow(),
-            dep.name.blue(),
-            format_ver_change(&dep)
-        );
+        println!("{} {}", "^".yellow(), format_store_diff(&dep));
     }
 }
 
 fn sys_pkg_sorter(new: &PackageDiff, old: &PackageDiff) -> Ordering {
     match (&new.pkg, &old.pkg) {
-        (Some(_), Some(_)) | (None, None) => old
+        (Some(_), Some(_)) | (None, None) => new
             .deps
             .len()
-            .cmp(&new.deps.len())
+            .cmp(&old.deps.len())
             .then_with(|| new.name.cmp(&old.name)),
         (Some(_), None) => Ordering::Less,
         (None, Some(_)) => Ordering::Greater,

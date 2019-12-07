@@ -1,20 +1,34 @@
-use super::{StorePath, StorePathMap, SystemPackageMap};
+use super::{Derivation, Store};
+use std::collections::HashSet;
 
 #[derive(Debug)]
 pub struct StoreDiff {
     pub name: String,
+    pub suffix: Option<String>,
     pub ver_from: String,
     pub ver_to: String,
 }
 
 impl StoreDiff {
-    pub fn from_store(new: &StorePath, old: &StorePath) -> Option<StoreDiff> {
+    pub fn from_store(new: &Store, old: &Store) -> Option<StoreDiff> {
         if new.version == old.version {
             return None;
         }
 
+        // We only want stores with the same suffix
+        match (&new.suffix, &old.suffix) {
+            (Some(new_suffix), Some(old_suffix)) => {
+                if new_suffix != old_suffix {
+                    return None;
+                }
+            }
+            (Some(_), None) | (None, Some(_)) => return None,
+            (None, None) => (),
+        }
+
         let diff = StoreDiff {
             name: new.name.clone(),
+            suffix: new.suffix.clone(),
             ver_from: old.version.clone(),
             ver_to: new.version.clone(),
         };
@@ -22,11 +36,14 @@ impl StoreDiff {
         Some(diff)
     }
 
-    pub fn from_store_list(new_stores: &StorePathMap, old_stores: &StorePathMap) -> Vec<StoreDiff> {
+    pub fn from_store_list(
+        new_stores: &HashSet<Store>,
+        old_stores: &HashSet<Store>,
+    ) -> Vec<StoreDiff> {
         let mut diffs = Vec::new();
 
         for new in new_stores {
-            let old = match old_stores.get(&new.name) {
+            let old = match old_stores.get(&new) {
                 Some(old) => old,
                 None => continue,
             };
@@ -56,16 +73,16 @@ pub struct PackageDiff {
     pub deps: Vec<StoreDiff>,
 }
 
-pub fn get_package_diffs(new: &SystemPackageMap, old: &SystemPackageMap) -> Vec<PackageDiff> {
+pub fn get_package_diffs(new: &HashSet<Derivation>, old: &HashSet<Derivation>) -> Vec<PackageDiff> {
     let mut diffs = Vec::new();
 
-    for new_pkg in new.values() {
-        let old_pkg = match old.get(&new_pkg.path.name) {
+    for new_pkg in new {
+        let old_pkg = match old.get(&new_pkg) {
             Some(old_pkg) => old_pkg,
             None => continue,
         };
 
-        let pkg_diff = StoreDiff::from_store(&new_pkg.path, &old_pkg.path);
+        let pkg_diff = StoreDiff::from_store(&new_pkg.store, &old_pkg.store);
         let dep_diffs = StoreDiff::from_store_list(&new_pkg.deps, &old_pkg.deps);
 
         if pkg_diff.is_none() && dep_diffs.is_empty() {
@@ -73,7 +90,7 @@ pub fn get_package_diffs(new: &SystemPackageMap, old: &SystemPackageMap) -> Vec<
         }
 
         let diff = PackageDiff {
-            name: new_pkg.path.name.clone(),
+            name: new_pkg.store.name.clone(),
             pkg: pkg_diff,
             deps: dep_diffs,
         };
@@ -86,110 +103,85 @@ pub fn get_package_diffs(new: &SystemPackageMap, old: &SystemPackageMap) -> Vec<
 
 #[cfg(test)]
 mod test {
-    use super::super::test::{mkstore, mksyspkg};
     use super::*;
 
-    fn mkstorediff<S>(name: S, from: S, to: S) -> StoreDiff
-    where
-        S: Into<String>,
-    {
-        StoreDiff {
-            name: name.into(),
-            ver_from: from.into(),
-            ver_to: to.into(),
-        }
+    macro_rules! store {
+        ($name:expr, $version:expr, $suffix:expr) => {
+            Store {
+                id: 0,
+                register_time: 0,
+                name: $name.into(),
+                version: $version.into(),
+                suffix: $suffix,
+            }
+        };
+    }
+
+    macro_rules! diff {
+        ($name:expr, $ver_from:expr, $ver_to:expr) => {
+            StoreDiff {
+                name: $name.into(),
+                suffix: None,
+                ver_from: $ver_from.into(),
+                ver_to: $ver_to.into(),
+            }
+        };
     }
 
     #[test]
     fn detect_store_diffs() {
         let new_stores = vec![
-            mkstore("glxinfo", "8.5.0"),
-            mkstore("ffmpeg", "3.4.5"),
-            mkstore("wine-wow|staging", "4.1"),
-            mkstore("steam-runtime", "2019-02-15"),
-            mkstore("dxvk", "v0.96"),
+            store!("glxinfo", "8.5.0", None),
+            store!("ffmpeg", "3.4.5", None),
+            store!("wine-wow", "4.1", Some("staging".into())),
+            store!("steam-runtime", "2019-02-15", None),
+            store!("dxvk", "v0.96", None),
+            store!("diff-suffix", "3.4.6", Some("bin".into())),
+            store!("same-suffix", "1.0.1", Some("bin".into())),
+            store!("partial-suffix", "1.0.1", None),
         ]
         .into_iter()
-        .collect::<StorePathMap>();
+        .collect::<HashSet<Store>>();
 
         let old_stores = vec![
-            mkstore("glxinfo", "8.4.0"),
-            mkstore("ffmpeg", "3.4.5"),
-            mkstore("wine-wow|staging", "4.0-rc5"),
-            mkstore("steam-runtime", "2016-08-26"),
-            mkstore("dxvk", "v0.96"),
+            store!("glxinfo", "8.4.0", None),
+            store!("ffmpeg", "3.4.5", None),
+            store!("wine-wow", "4.0-rc5", Some("staging".into())),
+            store!("steam-runtime", "2016-08-26", None),
+            store!("dxvk", "v0.96", None),
+            store!("diff-suffix", "3.4.5", Some("out".into())),
+            store!("same-suffix", "1.0.0", Some("bin".into())),
+            store!("partial-suffix", "1.0.0", Some("bin".into())),
         ]
         .into_iter()
-        .collect::<StorePathMap>();
+        .collect::<HashSet<Store>>();
 
         let expected_diffs = vec![
-            mkstorediff("glxinfo", "8.4.0", "8.5.0"),
-            mkstorediff("wine-wow|staging", "4.0-rc5", "4.1"),
-            mkstorediff("steam-runtime", "2016-08-26", "2019-02-15"),
+            diff!("glxinfo", "8.4.0", "8.5.0"),
+            diff!("wine-wow", "4.0-rc5", "4.1"),
+            diff!("steam-runtime", "2016-08-26", "2019-02-15"),
+            diff!("same-suffix", "1.0.0", "1.0.1"),
         ];
 
         let diffs = StoreDiff::from_store_list(&new_stores, &old_stores);
 
         assert!(
             diffs.len() == expected_diffs.len(),
-            "actual number of diffs does not match expected"
+            "got {} diffs, expected {}:\n\texpected: {:?}\n\n\tgot: {:?}",
+            diffs.len(),
+            expected_diffs.len(),
+            expected_diffs,
+            diffs
         );
 
         for diff in diffs {
             let expected = expected_diffs
                 .iter()
                 .find(|&x| x == &diff)
-                .expect(&format!("expected diff not found! {:?}", diff.name));
+                .expect(&format!("expected diff not found: {}", diff.name));
 
-            assert_eq!(diff.ver_from, expected.ver_from, "from version mismatch");
-            assert_eq!(diff.ver_to, expected.ver_to, "to version mismatch");
-        }
-    }
-
-    #[test]
-    fn separate_global_deps() {
-        let pkgs = vec![
-            mksyspkg(
-                mkstore("test1", "1"),
-                vec![mkstore("db", "4.8.30"), mkstore("glibc", "2.27")]
-                    .into_iter()
-                    .collect::<StorePathMap>(),
-            ),
-            mksyspkg(
-                mkstore("test2", "1"),
-                vec![mkstore("db", "5.0.0"), mkstore("glibc", "2.27")]
-                    .into_iter()
-                    .collect::<StorePathMap>(),
-            ),
-            mksyspkg(
-                mkstore("test3", "1"),
-                vec![mkstore("db", "4.8.30"), mkstore("glibc", "2.27")]
-                    .into_iter()
-                    .collect::<StorePathMap>(),
-            ),
-        ]
-        .into_iter()
-        .map(|x| (x.path.name.clone(), x))
-        .collect::<SystemPackageMap>();
-
-        let expected_pkg_dep = [mkstore("db", "4.8.30"), mkstore("db", "5.0.0")];
-
-        for pkg in pkgs.values() {
-            let found = pkg.deps.iter().find(|pkg_dep| {
-                for dep in &expected_pkg_dep {
-                    if dep.name == pkg_dep.name && dep.version == pkg_dep.version {
-                        return true;
-                    }
-                }
-
-                false
-            });
-
-            assert!(
-                found.is_some(),
-                "failed to find package-specific dependency for {}",
-                pkg.path.name
-            );
+            assert_eq!(diff.ver_from, expected.ver_from, "old version mismatch");
+            assert_eq!(diff.ver_to, expected.ver_to, "new version mismatch");
         }
     }
 }

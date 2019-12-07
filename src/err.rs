@@ -1,9 +1,7 @@
 use snafu::{Backtrace, ErrorCompat, GenerateBacktrace, Snafu};
 use std::io;
 use std::path;
-use std::process;
 use std::result;
-use std::string;
 
 pub type Result<T> = result::Result<T, Error>;
 
@@ -14,19 +12,6 @@ pub enum Error {
     FileIO {
         path: path::PathBuf,
         source: io::Error,
-        backtrace: Backtrace,
-    },
-
-    #[snafu(display("command io error: [{:?}]: {}", cmd, source))]
-    CommandIO {
-        cmd: process::Command,
-        source: io::Error,
-        backtrace: Backtrace,
-    },
-
-    #[snafu(display("utf8 string decode failed: {}", source))]
-    UTF8Decode {
-        source: string::FromUtf8Error,
         backtrace: Backtrace,
     },
 
@@ -42,17 +27,14 @@ pub enum Error {
         backtrace: Backtrace,
     },
 
-    #[snafu(display("unable to get kernel store info"))]
-    GetKernelStore { backtrace: Backtrace },
-}
+    #[snafu(display("sqlite error: {}", source))]
+    Rusqlite {
+        source: rusqlite::Error,
+        backtrace: Backtrace,
+    },
 
-impl From<string::FromUtf8Error> for Error {
-    fn from(err: string::FromUtf8Error) -> Self {
-        Error::UTF8Decode {
-            source: err,
-            backtrace: Backtrace::generate(),
-        }
-    }
+    #[snafu(display("must run as root"))]
+    RunAsRoot,
 }
 
 impl From<rmp_serde::encode::Error> for Error {
@@ -67,6 +49,15 @@ impl From<rmp_serde::encode::Error> for Error {
 impl From<rmp_serde::decode::Error> for Error {
     fn from(err: rmp_serde::decode::Error) -> Self {
         Error::RMPDecode {
+            source: err,
+            backtrace: Backtrace::generate(),
+        }
+    }
+}
+
+impl From<rusqlite::Error> for Error {
+    fn from(err: rusqlite::Error) -> Self {
+        Error::Rusqlite {
             source: err,
             backtrace: Backtrace::generate(),
         }

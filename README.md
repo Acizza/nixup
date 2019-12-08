@@ -1,5 +1,6 @@
 # nixup
 
+[![Build Status](https://travis-ci.org/Acizza/nixup.svg?branch=master)](https://travis-ci.org/Acizza/nixup)
 [![dependency status](https://deps.rs/repo/github/acizza/nixup/status.svg)](https://deps.rs/repo/github/acizza/nixup)
 
 This is a tool for [NixOS](https://nixos.org/) to display updates to installed packages and their dependencies.

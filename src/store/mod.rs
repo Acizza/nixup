@@ -26,114 +26,139 @@ pub struct Store {
 impl Store {
     pub fn parse<P>(id: u32, register_time: u32, path: P) -> Option<Self>
     where
-        P: Into<String>,
+        P: AsRef<str>,
     {
-        let path = path.into();
+        const DELIMETER: u8 = b'-';
 
-        let stripped = Self::strip(path)?;
-        let mut split_sep = stripped.split('-').collect::<SmallVec<[&str; 4]>>();
+        let path = Self::strip_prefix(path.as_ref().as_bytes())?;
 
-        match split_sep.len() {
-            0 | 1 => return None,
-            2 => {
-                if !split_sep[1].chars().any(char::is_numeric) {
+        // Get all of the indices for our delimeter
+        let fragments = path
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &byte)| if byte == DELIMETER { Some(i) } else { None })
+            .collect::<SmallVec<[usize; 4]>>();
+
+        match fragments.len() {
+            0 => return None,
+            // Only having one delimiter is usually indicative of a "{name}-{version}" format, so we can
+            // take a fast path here
+            1 => {
+                let version = &path[fragments[0] + 1..];
+
+                if !version.iter().any(|b| b.is_ascii_digit()) {
                     return None;
                 }
 
-                let version = split_sep.swap_remove(1).into();
-                let name = split_sep.swap_remove(0).into();
+                let name = &path[..fragments[0]];
 
                 return Some(Self {
                     id,
                     register_time,
-                    name,
-                    version,
+                    name: String::from_utf8_lossy(name).into_owned(),
+                    version: String::from_utf8_lossy(version).into_owned(),
                     suffix: None,
                 });
             }
             _ => (),
         }
 
-        let suffix = {
-            let end = split_sep.len() - 1;
+        // The suffix is the last fragment if it does not contain any numbers
+        let (suffix, suffix_start) = {
+            let last_frag = fragments[fragments.len() - 1];
+            let slice = &path[last_frag + 1..];
 
-            if split_sep[end].chars().all(char::is_alphabetic) {
-                Some(split_sep.swap_remove(end).to_string())
+            if !slice.iter().any(u8::is_ascii_digit) {
+                (Some(slice), last_frag)
             } else {
-                None
+                (None, path.len())
             }
         };
 
-        let version = {
-            let pos = split_sep.iter().position(|&s| Self::is_version_str(s))?;
-            let ver_str = split_sep[pos..].join("-");
+        // The version will be all fragments that match `is_version_str`
+        let (version, version_start) = {
+            let mut version = None;
+            let mut version_start = 0;
+            let mut frag_iter = fragments.iter().peekable();
 
-            unsafe {
-                split_sep.set_len(pos);
+            while let Some(&fragment) = frag_iter.next() {
+                // We need to check for a version string on a per-fragment basis, as
+                // `is_version_str` will disqualify our fragment character
+                let slice = match frag_iter.peek() {
+                    Some(&&next_frag) => &path[fragment + 1..next_frag],
+                    None => &path[fragment + 1..],
+                };
+
+                if !Self::is_version_str(slice) {
+                    continue;
+                }
+
+                version = Some(&path[fragment + 1..suffix_start]);
+                version_start = fragment;
+                break;
             }
 
-            ver_str
+            (version?, version_start)
         };
 
-        let name = split_sep.join("-");
+        // This is safe because we aren't modifying the path that we received,
+        // and we received the path as a &str
+        let store = unsafe {
+            Self {
+                id,
+                register_time,
+                name: String::from_utf8_unchecked(path[..version_start].into()),
+                version: String::from_utf8_unchecked(version.into()),
+                suffix: suffix.map(|sfx| String::from_utf8_unchecked(sfx.into())),
+            }
+        };
 
-        Some(Self {
-            id,
-            register_time,
-            name,
-            version,
-            suffix,
-        })
+        Some(store)
     }
 
-    fn is_version_str(string: &str) -> bool {
-        fn is_digit(b: u8) -> bool {
-            b >= b'0' && b <= b'9'
-        }
-
-        if string.is_empty() {
+    fn is_version_str(mut bytes: &[u8]) -> bool {
+        if bytes.is_empty() {
             return false;
         }
 
-        let mut bytes = string.as_bytes();
-
         match bytes[0] {
             b'v' => {
-                if bytes.len() < 2 || !is_digit(bytes[1]) {
+                if bytes.len() < 2 || !bytes[1].is_ascii_digit() {
                     return false;
                 }
 
                 bytes = &bytes[1..];
             }
-            b => {
-                if !is_digit(b) {
-                    return false;
-                }
-            }
+            b if !b.is_ascii_digit() => return false,
+            _ => (),
         }
 
-        bytes.iter().all(|&c| match c {
-            c if is_digit(c) => true,
+        bytes.iter().all(|c| match c {
+            c if c.is_ascii_digit() => true,
             b'.' | b'a'..=b'z' | b'_' => true,
             _ => false,
         })
     }
 
-    pub fn strip<P>(path: P) -> Option<String>
-    where
-        P: AsRef<str> + Into<String>,
-    {
-        let path_ref = path.as_ref();
+    pub fn strip_prefix(bytes: &[u8]) -> Option<&[u8]> {
+        const PREFIX_LEN: usize = "/nix/store/zzw3mjv8dcmrz4ran92pnyj97f05ff55-".len();
+        const DASH_POS: usize = PREFIX_LEN - 1;
 
-        match path_ref.find('-') {
-            Some(idx) if path_ref.len() <= idx + 1 => None,
-            Some(idx) => {
-                let mut path = path.into();
-                path.replace_range(..=idx, "");
-                Some(path)
-            }
-            None => None,
+        // Every store starts with "/nix/store/{sha256 hash}-", so we can simply assume where
+        // the end of the prefix is
+        if bytes.len() > PREFIX_LEN && bytes[DASH_POS] == b'-' {
+            return Some(&bytes[PREFIX_LEN..]);
         }
+
+        // Even though every store should have hit the fast path above, we'll use a fallback
+        // just in case the store path prefix is changed in the future
+        let pos = bytes.iter().position(|b| *b == b'-')?;
+
+        if bytes.len() <= pos + 1 {
+            return None;
+        }
+
+        Some(&bytes[pos + 1..])
     }
 
     pub fn all_from_system(db: &SystemDatabase) -> Result<HashSet<Self>> {
@@ -299,20 +324,24 @@ mod test {
     #[test]
     fn parse_store_info() {
         let stores = [
-            store_tuple!("/nix/store/123abc-fix-static.patch"),
-            store_tuple!("/nix/store/123abc-some-deriv.drv"),
-            store_tuple!("/nix/store/123abc-glxinfo-8.4.0" => "glxinfo", "8.4.0", None),
-            store_tuple!("/nix/store/123abc-pcre-8.42" => "pcre", "8.42", None),
-            store_tuple!("/nix/store/123abc-dxvk-v1.4.6" => "dxvk", "v1.4.6", None),
-            store_tuple!("/nix/store/123abc-dxvk-c47095a8dcfa4c376d8e9c4276865b7f298137d8" => "dxvk", "c47095a8dcfa4c376d8e9c4276865b7f298137d8", None),
-            store_tuple!("/nix/store/123abc-rpcs3-9165-8ca53f9" => "rpcs3", "9165-8ca53f9", None),
-            store_tuple!("/nix/store/123abc-single-version-8" => "single-version", "8", None),
-            store_tuple!("/nix/store/123abc-single-4" => "single", "4", None),
-            store_tuple!("/nix/store/123abc-wine-wow-4.21-staging" => "wine-wow", "4.21", Some("staging".into())),
-            store_tuple!("/nix/store/123abc-wine-wow-4.0-rc5-staging" => "wine-wow", "4.0-rc5", Some("staging".into())),
-            store_tuple!("/nix/store/123abc-ffmpeg-3.4.5-bin" => "ffmpeg", "3.4.5", Some("bin".into())),
-            store_tuple!("/nix/store/123abc-vulkan-loader-1.1.85" => "vulkan-loader", "1.1.85", None),
-            store_tuple!("/nix/store/123abc-vpnc-0.5.3-post-r550" => "vpnc", "0.5.3-post-r550", None),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-fix-static.patch"),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-some-deriv.drv"),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-dash-edge-case-"),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-dash-short-"),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-"),
+            store_tuple!("/nix/store/123shortprefix-short-prefix-1.0" => "short-prefix", "1.0", None),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-glxinfo-8.4.0" => "glxinfo", "8.4.0", None),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-pcre-8.42" => "pcre", "8.42", None),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-dxvk-v1.4.6" => "dxvk", "v1.4.6", None),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-dxvk-c47095a8dcfa4c376d8e9c4276865b7f298137d8" => "dxvk", "c47095a8dcfa4c376d8e9c4276865b7f298137d8", None),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-rpcs3-9165-8ca53f9" => "rpcs3", "9165-8ca53f9", None),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-single-version-8" => "single-version", "8", None),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-single-4" => "single", "4", None),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-wine-wow-4.21-staging" => "wine-wow", "4.21", Some("staging".into())),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-wine-wow-4.0-rc5-staging" => "wine-wow", "4.0-rc5", Some("staging".into())),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-ffmpeg-3.4.5-bin" => "ffmpeg", "3.4.5", Some("bin".into())),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-vulkan-loader-1.1.85" => "vulkan-loader", "1.1.85", None),
+            store_tuple!("/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-vpnc-0.5.3-post-r550" => "vpnc", "0.5.3-post-r550", None),
         ];
 
         for (path, expected_store) in &stores {
@@ -336,7 +365,14 @@ mod test {
 
     #[test]
     fn strip_store_path() {
-        let store = "/nix/store/03lp4drizbh8cl3f9mjysrrzrg3ssakv-glxinfo-8.4.0";
-        assert_eq!(Store::strip(store), Some("glxinfo-8.4.0".into()));
+        let store = "/nix/store/03lp4drizbh8cl3f9mjysrrzrg3ssakv-glxinfo-8.4.0".as_bytes();
+        assert_eq!(
+            Store::strip_prefix(store),
+            Some("glxinfo-8.4.0".as_bytes()),
+            "normal store"
+        );
+
+        let dash_edge_case = "/nix/store/zx6vs1b6xf07cprslk9is1fhwih21ix5-".as_bytes();
+        assert_eq!(Store::strip_prefix(dash_edge_case), None, "dash edge case");
     }
 }

@@ -52,13 +52,19 @@ impl Store {
 
                 let name = &path[..fragments[0]];
 
-                return Some(Self {
-                    id,
-                    register_time,
-                    name: String::from_utf8_lossy(name).into_owned(),
-                    version: String::from_utf8_lossy(version).into_owned(),
-                    suffix: None,
-                });
+                // This is safe because we aren't modifying the path that we received,
+                // and we received the path as a &str
+                let store = unsafe {
+                    Self {
+                        id,
+                        register_time,
+                        name: String::from_utf8_unchecked(name.into()),
+                        version: String::from_utf8_unchecked(version.into()),
+                        suffix: None,
+                    }
+                };
+
+                return Some(store);
             }
             _ => (),
         }

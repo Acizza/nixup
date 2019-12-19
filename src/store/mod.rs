@@ -192,7 +192,8 @@ impl Store {
                 let store = Store::parse(id, register_time, path);
                 Ok(store)
             })?
-            .filter_map(|row| row.ok().and_then(|store| store));
+            .flatten()
+            .flatten();
 
         let stores = Self::get_unique(store_queries);
         Ok(stores)

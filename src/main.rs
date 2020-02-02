@@ -4,23 +4,27 @@ mod store;
 
 use crate::err::Result;
 use crate::store::{Derivation, SystemDatabase};
-use clap::clap_app;
+use gumdrop::Options;
 use serde_derive::{Deserialize, Serialize};
 use snafu::{ensure, ResultExt};
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::PathBuf;
 
-fn main() {
-    let args = clap_app!(nixup =>
-        (version: env!("CARGO_PKG_VERSION"))
-        (author: env!("CARGO_PKG_AUTHORS"))
-        (about: "A tool for NixOS to display which system packages have been updated")
-        (@arg save_state: -s --save "Save the current system package state. Run with this flag before a system update and without any flags afterwards to see what was updated.")
-    )
-    .get_matches();
+#[derive(Options)]
+struct CmdOptions {
+    #[options(help = "print help message")]
+    help: bool,
+    #[options(
+        help = "save the current system package state. Run with this flag before a system update and without this flag after updating to see what was updated"
+    )]
+    save_state: bool,
+}
 
-    match run(&args) {
+fn main() {
+    let args = CmdOptions::parse_args_default_or_exit();
+
+    match run(args) {
         Ok(_) => (),
         Err(err) => {
             err::display_error(err);
@@ -29,12 +33,12 @@ fn main() {
     }
 }
 
-fn run(args: &clap::ArgMatches) -> Result<()> {
+fn run(args: CmdOptions) -> Result<()> {
     ensure!(is_root_user(), err::RunAsRoot);
 
     let system_db = SystemDatabase::open()?;
 
-    if args.is_present("save_state") {
+    if args.save_state {
         let pkgs = Derivation::all_from_system(&system_db)?;
         let state = PackageState::new(pkgs);
         state.save()

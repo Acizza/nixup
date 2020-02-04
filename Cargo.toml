@@ -10,11 +10,15 @@ dirs = "~2.0.0"
 gumdrop = "~0.7.0"
 libc = "~0.2.0"
 rmp-serde = "~0.14.0"
-rusqlite = "~0.21.0"
 serde = "~1.0.0"
 serde_derive = "~1.0.0"
 smallvec = "~1.2.0"
 snafu = "~0.6.0"
+
+[dependencies.diesel]
+version = "~1.4.0"
+default-features = false
+features = [ "sqlite" ]
 
 [profile.release]
 lto = true

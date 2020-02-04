@@ -27,9 +27,15 @@ pub enum Error {
         backtrace: Backtrace,
     },
 
-    #[snafu(display("sqlite error: {}", source))]
-    Rusqlite {
-        source: rusqlite::Error,
+    #[snafu(display("diesel error: {}", source))]
+    Diesel {
+        source: diesel::result::Error,
+        backtrace: Backtrace,
+    },
+
+    #[snafu(display("diesel connection error: {}", source))]
+    DieselConnection {
+        source: diesel::result::ConnectionError,
         backtrace: Backtrace,
     },
 
@@ -55,10 +61,19 @@ impl From<rmp_serde::decode::Error> for Error {
     }
 }
 
-impl From<rusqlite::Error> for Error {
-    fn from(err: rusqlite::Error) -> Self {
-        Error::Rusqlite {
-            source: err,
+impl From<diesel::result::Error> for Error {
+    fn from(source: diesel::result::Error) -> Self {
+        Self::Diesel {
+            source,
+            backtrace: Backtrace::generate(),
+        }
+    }
+}
+
+impl From<diesel::result::ConnectionError> for Error {
+    fn from(source: diesel::result::ConnectionError) -> Self {
+        Self::DieselConnection {
+            source,
             backtrace: Backtrace::generate(),
         }
     }

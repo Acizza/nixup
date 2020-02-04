@@ -1,9 +1,13 @@
+#[macro_use]
+extern crate diesel;
+
 mod display;
 mod err;
 mod store;
 
 use crate::err::Result;
-use crate::store::{Derivation, SystemDatabase};
+use crate::store::database::SystemDatabase;
+use crate::store::Derivation;
 use gumdrop::Options;
 use serde_derive::{Deserialize, Serialize};
 use snafu::{ensure, ResultExt};

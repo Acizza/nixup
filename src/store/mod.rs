@@ -1,7 +1,8 @@
+pub mod database;
 pub mod diff;
 
 use crate::err::Result;
-use rusqlite::params;
+use database::SystemDatabase;
 use serde_derive::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::collections::HashSet;
@@ -168,35 +169,24 @@ impl Store {
     }
 
     pub fn all_from_system(db: &SystemDatabase) -> Result<HashSet<Self>> {
-        let mut stmt = db
-            .conn()
-            .prepare(include_str!("../../sql/select_system_stores.sql"))?;
+        use database::ValidPaths::dsl::*;
+        use diesel::prelude::*;
 
-        Self::unique_from_query(rusqlite::NO_PARAMS, &mut stmt)
-    }
+        let stores = ValidPaths
+            .filter(ca.is_null())
+            .filter(path.not_like("%-completions"))
+            .filter(path.not_like("%.tar.%"))
+            .select((id, path, registrationTime))
+            .order(registrationTime.desc())
+            .get_results::<(i32, String, i32)>(db.conn())?
+            .into_iter()
+            .filter_map(|(store_id, store_path, reg)| {
+                Store::parse(store_id as u32, reg as u32, store_path)
+            });
 
-    /// Runs the specified SQL statement (`stmt`) and attemps to parse each returned row into a unique `Store`.
-    /// Note that the query must select the store's ID, path, and registration time, in that order.
-    ///
-    /// See the documentation of the `get_unique` function for more information on what is considered a unique `Store`.
-    fn unique_from_query<P>(params: P, stmt: &mut rusqlite::Statement) -> Result<HashSet<Self>>
-    where
-        P: IntoIterator,
-        P::Item: rusqlite::ToSql,
-    {
-        let store_queries = stmt
-            .query_map(params, |row| {
-                let id = row.get(0)?;
-                let path: String = row.get(1)?;
-                let register_time: u32 = row.get(2)?;
-                let store = Store::parse(id, register_time, path);
-                Ok(store)
-            })?
-            .flatten()
-            .flatten();
+        let unique = Self::get_unique(stores);
 
-        let stores = Self::get_unique(store_queries);
-        Ok(stores)
+        Ok(unique)
     }
 
     /// Returns a new `HashSet` containing `Store`'s that are not considered to have duplicates.
@@ -256,23 +246,42 @@ pub struct Derivation {
 
 impl Derivation {
     pub fn all_from_stores(stores: HashSet<Store>, db: &SystemDatabase) -> Result<HashSet<Self>> {
-        let mut stmt = db
-            .conn()
-            .prepare(include_str!("../../sql/select_store_deps.sql"))?;
+        use database::Refs::dsl::*;
+        use database::ValidPaths::dsl::*;
+        use diesel::prelude::*;
 
         let mut packages = HashSet::with_capacity(stores.len());
 
-        for store in stores {
-            let deps = Store::unique_from_query(params![store.id], &mut stmt)?;
-            packages.insert(Self { store, deps });
-        }
+        db.conn().transaction::<_, diesel::result::Error, _>(|| {
+            for store in stores {
+                let is_dependency =
+                    id.eq_any(Refs.filter(referrer.eq(store.id as i32)).select(reference));
+
+                let all_deps = ValidPaths
+                    .filter(ca.is_null())
+                    .filter(id.ne(store.id as i32))
+                    .filter(is_dependency)
+                    .select((id, path, registrationTime))
+                    .order(registrationTime.desc())
+                    .get_results::<(i32, String, i32)>(db.conn())?
+                    .into_iter()
+                    .filter_map(|(store_id, store_path, reg)| {
+                        Store::parse(store_id as u32, reg as u32, store_path)
+                    });
+
+                let deps = Store::get_unique(all_deps);
+                packages.insert(Self { store, deps });
+            }
+
+            Ok(())
+        })?;
 
         Ok(packages)
     }
 
     pub fn all_from_system(db: &SystemDatabase) -> Result<HashSet<Self>> {
         let stores = Store::all_from_system(db)?;
-        Derivation::all_from_stores(stores, db)
+        Self::all_from_stores(stores, db)
     }
 }
 
@@ -285,23 +294,6 @@ impl Hash for Derivation {
 impl PartialEq for Derivation {
     fn eq(&self, other: &Derivation) -> bool {
         self.store.name == other.store.name
-    }
-}
-
-pub struct SystemDatabase(rusqlite::Connection);
-
-impl SystemDatabase {
-    pub const PATH: &'static str = "/nix/var/nix/db/db.sqlite";
-
-    pub fn open() -> Result<Self> {
-        use rusqlite::{Connection, OpenFlags};
-        let conn = Connection::open_with_flags(Self::PATH, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        Ok(Self(conn))
-    }
-
-    #[inline(always)]
-    fn conn(&self) -> &rusqlite::Connection {
-        &self.0
     }
 }
 

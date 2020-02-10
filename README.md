@@ -22,7 +22,7 @@ The `^` arrow in front of the `db` and `pcre2` packages indicate that they were 
 
 # Usage
 
-Due to the nature of how NixOS handles updates, you can only see which packages were updated after you update your system, and you must run the tool before you update in order to save the current system package state. You will also need to run the program as root in all cases (because of SQLite issues).
+Due to the nature of how NixOS handles updates, you can only see which packages were updated after you update your system, and you must run the tool before you update in order to save the current system package state. You will also need to run the program as root if SQLite has not been compiled with `SQLITE_USE_URI=1`.
 
 To save the current package state, run the program with the `-s` flag. Note that you don't necessarily have to save the package state before every update; so you could, for example, run it once a week or month if you'd rather see all of the updates made over that kind of time period.
 

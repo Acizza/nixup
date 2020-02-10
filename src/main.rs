@@ -10,7 +10,7 @@ use crate::store::database::SystemDatabase;
 use crate::store::Derivation;
 use gumdrop::Options;
 use serde_derive::{Deserialize, Serialize};
-use snafu::{ensure, ResultExt};
+use snafu::ResultExt;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::PathBuf;
@@ -38,8 +38,6 @@ fn main() {
 }
 
 fn run(args: CmdOptions) -> Result<()> {
-    ensure!(is_root_user(), err::RunAsRoot);
-
     let system_db = SystemDatabase::open()?;
 
     if args.save_state {
@@ -53,10 +51,6 @@ fn run(args: CmdOptions) -> Result<()> {
         display::package_diffs(cur_state, old_state.take());
         Ok(())
     }
-}
-
-fn is_root_user() -> bool {
-    unsafe { libc::getuid() == 0 }
 }
 
 #[derive(Serialize, Deserialize)]

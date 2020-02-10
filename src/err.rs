@@ -39,8 +39,8 @@ pub enum Error {
         backtrace: Backtrace,
     },
 
-    #[snafu(display("must run as root"))]
-    RunAsRoot,
+    #[snafu(display("must run program as root to access the Nix database\nto avoid needing root access, compile SQLite with SQLITE_USE_URI=1"))]
+    DBNeedsRoot,
 }
 
 impl From<rmp_serde::encode::Error> for Error {

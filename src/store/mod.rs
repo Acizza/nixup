@@ -169,7 +169,7 @@ impl Store {
     }
 
     pub fn all_from_system(db: &SystemDatabase) -> Result<HashSet<Self>> {
-        use database::ValidPaths::dsl::*;
+        use database::schema::ValidPaths::dsl::*;
         use diesel::prelude::*;
 
         let stores = ValidPaths
@@ -246,8 +246,7 @@ pub struct Derivation {
 
 impl Derivation {
     pub fn all_from_stores(stores: HashSet<Store>, db: &SystemDatabase) -> Result<HashSet<Self>> {
-        use database::Refs::dsl::*;
-        use database::ValidPaths::dsl::*;
+        use database::schema::{Refs::dsl::*, ValidPaths::dsl::*};
         use diesel::prelude::*;
 
         let mut packages = HashSet::with_capacity(stores.len());

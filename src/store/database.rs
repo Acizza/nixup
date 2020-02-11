@@ -2,30 +2,32 @@ use crate::err::{self, Result};
 use diesel::prelude::*;
 use snafu::ensure;
 
-table! {
-    #[allow(non_snake_case)]
-    Refs (referrer, reference) {
-        referrer -> Integer,
-        reference -> Integer,
+pub mod schema {
+    table! {
+        #[allow(non_snake_case)]
+        Refs (referrer, reference) {
+            referrer -> Integer,
+            reference -> Integer,
+        }
     }
-}
 
-table! {
-    #[allow(non_snake_case)]
-    ValidPaths {
-        id -> Integer,
-        path -> Text,
-        hash -> Text,
-        registrationTime -> Integer,
-        deriver -> Nullable<Text>,
-        narSize -> Nullable<Integer>,
-        ultimate -> Nullable<Integer>,
-        sigs -> Nullable<Text>,
-        ca -> Nullable<Text>,
+    table! {
+        #[allow(non_snake_case)]
+        ValidPaths {
+            id -> Integer,
+            path -> Text,
+            hash -> Text,
+            registrationTime -> Integer,
+            deriver -> Nullable<Text>,
+            narSize -> Nullable<Integer>,
+            ultimate -> Nullable<Integer>,
+            sigs -> Nullable<Text>,
+            ca -> Nullable<Text>,
+        }
     }
-}
 
-allow_tables_to_appear_in_same_query!(Refs, ValidPaths);
+    allow_tables_to_appear_in_same_query!(Refs, ValidPaths);
+}
 
 pub struct SystemDatabase(SqliteConnection);
 

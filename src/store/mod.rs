@@ -123,28 +123,16 @@ impl Store {
         Some(store)
     }
 
-    fn is_version_str(mut bytes: &[u8]) -> bool {
-        if bytes.is_empty() {
-            return false;
-        }
+    fn is_version_str(bytes: &[u8]) -> bool {
+        let slice = match bytes {
+            [b'v', b'0'..=b'9', rest @ ..] => rest,
+            [b'0'..=b'9', rest @ ..] => rest,
+            _ => return false,
+        };
 
-        match bytes[0] {
-            b'v' => {
-                if bytes.len() < 2 || !bytes[1].is_ascii_digit() {
-                    return false;
-                }
-
-                bytes = &bytes[1..];
-            }
-            b if !b.is_ascii_digit() => return false,
-            _ => (),
-        }
-
-        bytes.iter().all(|c| match c {
-            c if c.is_ascii_digit() => true,
-            b'.' | b'a'..=b'z' | b'_' => true,
-            _ => false,
-        })
+        slice
+            .iter()
+            .all(|c| matches!(c, b'0'..=b'9' | b'.' | b'a'..=b'z' | b'_'))
     }
 
     pub fn strip_prefix(bytes: &[u8]) -> Option<&[u8]> {

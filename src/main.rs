@@ -87,7 +87,7 @@ impl PackageState {
 }
 
 fn get_data_dir() -> Result<PathBuf> {
-    let dir = dirs::data_local_dir()
+    let dir = dirs_next::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("~/.local/share/"))
         .join(env!("CARGO_PKG_NAME"));
 

@@ -52,7 +52,9 @@ fn main() -> Result<()> {
         let state = PackageState::new(pkgs);
         state.save().context("failed to save system package state")
     } else {
-        let old_state = PackageState::load().context("failed to load system package state")?;
+        let old_state = PackageState::load()
+            .context("failed to load system package state\nplease run with the -s flag first")?;
+
         let cur_state = Derivation::all_from_system(&system_db)
             .context("failed to parse system derivations")?;
 
@@ -76,9 +78,9 @@ impl PackageState {
             anyhow!("failed to create package state file at {}", path.display())
         })?;
 
-        rmp_serde::encode::write(&mut file, self).with_context(|| {
+        bincode::serialize_into(&mut file, self).with_context(|| {
             anyhow!(
-                "failed to encode system package state at {}",
+                "failed to encode system package state to {}",
                 path.display()
             )
         })?;
@@ -92,9 +94,9 @@ impl PackageState {
         let file = File::open(&path)
             .with_context(|| anyhow!("failed to open package state file at {}", path.display()))?;
 
-        let state = rmp_serde::decode::from_read(file).with_context(|| {
+        let state = bincode::deserialize_from(file).with_context(|| {
             anyhow!(
-                "failed to decode system package state at {}",
+                "failed to decode system package state from {}",
                 path.display()
             )
         })?;
@@ -105,7 +107,7 @@ impl PackageState {
     fn save_path() -> Result<PathBuf> {
         let path = get_data_dir()
             .context("failed to get local data directory")?
-            .join("packages.mpack");
+            .join("packages.bin");
 
         Ok(path)
     }

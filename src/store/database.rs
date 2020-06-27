@@ -1,6 +1,5 @@
-use crate::err::{self, Result};
+use anyhow::{anyhow, Context, Result};
 use diesel::prelude::*;
-use snafu::ensure;
 
 pub mod schema {
     table! {
@@ -41,8 +40,13 @@ impl SystemDatabase {
         match SqliteConnection::establish(&immutable_conn) {
             Ok(conn) => Ok(Self(conn)),
             Err(_) => {
-                ensure!(is_root_user(), err::DBNeedsRoot);
-                let conn = SqliteConnection::establish(Self::PATH)?;
+                if !is_root_user() {
+                    return Err(anyhow!("must run program as root to access the Nix database\nto avoid needing root access, compile SQLite with SQLITE_USE_URI=1"));
+                }
+
+                let conn = SqliteConnection::establish(Self::PATH)
+                    .context("failed to establish SQLite connection to nix database")?;
+
                 Ok(Self(conn))
             }
         }

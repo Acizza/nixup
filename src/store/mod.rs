@@ -1,7 +1,7 @@
 pub mod database;
 pub mod diff;
 
-use crate::err::Result;
+use anyhow::{Context, Result};
 use database::SystemDatabase;
 use serde_derive::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -166,7 +166,8 @@ impl Store {
             .filter(path.not_like("%.tar.%"))
             .select((id, path, registrationTime))
             .order(registrationTime.desc())
-            .get_results::<(i32, String, i32)>(db.conn())?
+            .get_results::<(i32, String, i32)>(db.conn())
+            .context("failed to get stores from nix database")?
             .into_iter()
             .filter_map(|(store_id, store_path, reg)| {
                 Store::parse(store_id as u32, reg as u32, store_path)
@@ -239,29 +240,31 @@ impl Derivation {
 
         let mut packages = HashSet::with_capacity(stores.len());
 
-        db.conn().transaction::<_, diesel::result::Error, _>(|| {
-            for store in stores {
-                let is_dependency =
-                    id.eq_any(Refs.filter(referrer.eq(store.id as i32)).select(reference));
+        db.conn()
+            .transaction::<_, diesel::result::Error, _>(|| {
+                for store in stores {
+                    let is_dependency =
+                        id.eq_any(Refs.filter(referrer.eq(store.id as i32)).select(reference));
 
-                let all_deps = ValidPaths
-                    .filter(ca.is_null())
-                    .filter(id.ne(store.id as i32))
-                    .filter(is_dependency)
-                    .select((id, path, registrationTime))
-                    .order(registrationTime.desc())
-                    .get_results::<(i32, String, i32)>(db.conn())?
-                    .into_iter()
-                    .filter_map(|(store_id, store_path, reg)| {
-                        Store::parse(store_id as u32, reg as u32, store_path)
-                    });
+                    let all_deps = ValidPaths
+                        .filter(ca.is_null())
+                        .filter(id.ne(store.id as i32))
+                        .filter(is_dependency)
+                        .select((id, path, registrationTime))
+                        .order(registrationTime.desc())
+                        .get_results::<(i32, String, i32)>(db.conn())?
+                        .into_iter()
+                        .filter_map(|(store_id, store_path, reg)| {
+                            Store::parse(store_id as u32, reg as u32, store_path)
+                        });
 
-                let deps = Store::get_unique(all_deps);
-                packages.insert(Self { store, deps });
-            }
+                    let deps = Store::get_unique(all_deps);
+                    packages.insert(Self { store, deps });
+                }
 
-            Ok(())
-        })?;
+                Ok(())
+            })
+            .context("failed to get dependencies of a nix store")?;
 
         Ok(packages)
     }

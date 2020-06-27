@@ -7,24 +7,41 @@ mod store;
 use crate::store::database::SystemDatabase;
 use crate::store::Derivation;
 use anyhow::{anyhow, Context, Result};
-use gumdrop::Options;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::PathBuf;
 
-#[derive(Options)]
 struct CmdOptions {
-    #[options(help = "print help message")]
-    help: bool,
-    #[options(
-        help = "save the current system package state. Run with this flag before a system update and without this flag after updating to see what was updated"
-    )]
     save_state: bool,
 }
 
+impl CmdOptions {
+    fn from_env() -> Self {
+        let mut args = pico_args::Arguments::from_env();
+
+        if args.contains(["-h", "--help"]) {
+            Self::print_help();
+        }
+
+        Self {
+            save_state: args.contains(["-s", "--save-state"]),
+        }
+    }
+
+    fn print_help() {
+        println!(concat!("Usage: ", env!("CARGO_PKG_NAME"), " [OPTIONS]\n"));
+
+        println!("Optional arguments:");
+        println!("  -h, --help        print this message");
+        println!("  -s, --save-state  save the current system package state. Run with this flag before a system update and without this flag after updating to see what was updated");
+
+        std::process::exit(0);
+    }
+}
+
 fn main() -> Result<()> {
-    let args = CmdOptions::parse_args_default_or_exit();
+    let args = CmdOptions::from_env();
 
     let system_db = SystemDatabase::open().context("failed to open nix database")?;
 

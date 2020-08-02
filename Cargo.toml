@@ -21,7 +21,7 @@ default-features = false
 features = [ "sqlite" ]
 
 [profile.release]
-lto = true
+lto = "thin"
 codegen-units = 1
 panic = "abort"
 
